@@ -4,25 +4,28 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import WinJS = require('vs/base/common/winjs.base');
-import Touch = require('vs/base/browser/touch');
-import Events = require('vs/base/common/eventEmitter');
-import Mouse = require('vs/base/browser/mouseEvent');
-import Keyboard = require('vs/base/browser/keyboardEvent');
+import * as WinJS from 'vs/base/common/winjs.base';
+import * as Touch from 'vs/base/browser/touch';
+import * as Mouse from 'vs/base/browser/mouseEvent';
+import * as Keyboard from 'vs/base/browser/keyboardEvent';
 import { INavigator } from 'vs/base/common/iterator';
 import { ScrollbarVisibility } from 'vs/base/common/scrollable';
-import Event from 'vs/base/common/event';
+import { Event } from 'vs/base/common/event';
 import { IAction, IActionItem } from 'vs/base/common/actions';
 import { Color } from 'vs/base/common/color';
+import { IItemCollapseEvent, IItemExpandEvent } from 'vs/base/parts/tree/browser/treeModel';
 
-export interface ITree extends Events.IEventEmitter {
+export interface ITree {
 
-	emit(eventType: string, data?: any): void;
-
-	onDOMFocus: Event<void>;
-	onDOMBlur: Event<void>;
-	onHighlightChange: Event<void>;
-	onDispose: Event<void>;
+	onDidFocus: Event<void>;
+	onDidBlur: Event<void>;
+	onDidChangeFocus: Event<IFocusEvent>;
+	onDidChangeSelection: Event<ISelectionEvent>;
+	onDidChangeHighlight: Event<IHighlightEvent>;
+	onDidExpandItem: Event<IItemExpandEvent>;
+	onDidCollapseItem: Event<IItemCollapseEvent>;
+	onDidDispose: Event<void>;
+	onDidScroll: Event<void>;
 
 	/**
 	 * Returns the tree's DOM element.
@@ -58,7 +61,7 @@ export interface ITree extends Events.IEventEmitter {
 	/**
 	 * Sets DOM focus on the tree.
 	 */
-	DOMFocus(): void;
+	domFocus(): void;
 
 	/**
 	 * Returns whether the tree has DOM focus.
@@ -68,13 +71,18 @@ export interface ITree extends Events.IEventEmitter {
 	/**
 	 * Removes DOM focus from the tree.
 	 */
-	DOMBlur(): void;
+	domBlur(): void;
 
 	/**
 	 * Refreshes an element.
 	 * Provide no arguments and it will refresh the input element.
 	 */
 	refresh(element?: any, recursive?: boolean): WinJS.Promise;
+
+	/**
+	 * Updates an element's width.
+	 */
+	updateWidth(element: any): void;
 
 	/**
 	 * Expands an element.
@@ -104,7 +112,7 @@ export interface ITree extends Events.IEventEmitter {
 	/**
 	 * Toggles an element's expansion state.
 	 */
-	toggleExpansion(element: any): WinJS.Promise;
+	toggleExpansion(element: any, recursive?: boolean): WinJS.Promise;
 
 	/**
 	 * Toggles several element's expansion state.
@@ -133,6 +141,11 @@ export interface ITree extends Events.IEventEmitter {
 	 * Useful when calling `reveal(element, relativeTop)`.
 	 */
 	getRelativeTop(element: any): number;
+
+	/**
+	 * Returns the top-most visible element.
+	 */
+	getFirstVisibleElement(): any;
 
 	/**
 	 * Returns a number between 0 and 1 representing how much the tree is scroll down. 0 means all the way
@@ -657,6 +670,7 @@ export interface ITreeConfiguration {
 	filter?: IFilter;
 	sorter?: ISorter;
 	accessibilityProvider?: IAccessibilityProvider;
+	styler?: ITreeStyler;
 }
 
 export interface ITreeOptions extends ITreeStyles {
@@ -664,12 +678,19 @@ export interface ITreeOptions extends ITreeStyles {
 	showTwistie?: boolean;
 	indentPixels?: number;
 	verticalScrollMode?: ScrollbarVisibility;
+	horizontalScrollMode?: ScrollbarVisibility;
 	alwaysFocused?: boolean;
 	autoExpandSingleChildren?: boolean;
 	useShadows?: boolean;
 	paddingOnRow?: boolean;
 	ariaLabel?: string;
 	keyboardSupport?: boolean;
+	preventRootFocus?: boolean;
+	showLoading?: boolean;
+}
+
+export interface ITreeStyler {
+	style(styles: ITreeStyles): void;
 }
 
 export interface ITreeStyles {

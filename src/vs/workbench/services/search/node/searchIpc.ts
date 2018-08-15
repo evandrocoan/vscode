@@ -5,13 +5,15 @@
 
 'use strict';
 
-import { PPromise, TPromise } from 'vs/base/common/winjs.base';
+import { TPromise } from 'vs/base/common/winjs.base';
 import { IChannel } from 'vs/base/parts/ipc/common/ipc';
-import { IRawSearchService, IRawSearch, ISerializedSearchComplete, ISerializedSearchProgressItem } from './search';
+import { IRawSearchService, IRawSearch, ISerializedSearchComplete, ISerializedSearchProgressItem, ITelemetryEvent } from './search';
+import { Event } from 'vs/base/common/event';
 
 export interface ISearchChannel extends IChannel {
-	call(command: 'fileSearch', search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem>;
-	call(command: 'textSearch', search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem>;
+	listen(event: 'telemetry'): Event<ITelemetryEvent>;
+	listen(event: 'fileSearch', search: IRawSearch): Event<ISerializedSearchProgressItem | ISerializedSearchComplete>;
+	listen(event: 'textSearch', search: IRawSearch): Event<ISerializedSearchProgressItem | ISerializedSearchComplete>;
 	call(command: 'clearCache', cacheKey: string): TPromise<void>;
 	call(command: string, arg: any): TPromise<any>;
 }
@@ -20,29 +22,38 @@ export class SearchChannel implements ISearchChannel {
 
 	constructor(private service: IRawSearchService) { }
 
-	call(command: string, arg: any): TPromise<any> {
-		switch (command) {
+	listen<T>(event: string, arg?: any): Event<any> {
+		switch (event) {
+			case 'telemetry': return this.service.onTelemetry;
 			case 'fileSearch': return this.service.fileSearch(arg);
 			case 'textSearch': return this.service.textSearch(arg);
+		}
+		throw new Error('Event not found');
+	}
+
+	call(command: string, arg?: any): TPromise<any> {
+		switch (command) {
 			case 'clearCache': return this.service.clearCache(arg);
 		}
-		return undefined;
+		throw new Error('Call not found');
 	}
 }
 
 export class SearchChannelClient implements IRawSearchService {
 
+	get onTelemetry(): Event<ITelemetryEvent> { return this.channel.listen('telemetry'); }
+
 	constructor(private channel: ISearchChannel) { }
 
-	fileSearch(search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
-		return this.channel.call('fileSearch', search);
+	fileSearch(search: IRawSearch): Event<ISerializedSearchProgressItem | ISerializedSearchComplete> {
+		return this.channel.listen('fileSearch', search);
 	}
 
-	textSearch(search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
-		return this.channel.call('textSearch', search);
+	textSearch(search: IRawSearch): Event<ISerializedSearchProgressItem | ISerializedSearchComplete> {
+		return this.channel.listen('textSearch', search);
 	}
 
-	public clearCache(cacheKey: string): TPromise<void> {
+	clearCache(cacheKey: string): TPromise<void> {
 		return this.channel.call('clearCache', cacheKey);
 	}
 }

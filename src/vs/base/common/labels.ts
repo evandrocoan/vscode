@@ -5,22 +5,16 @@
 'use strict';
 
 import URI from 'vs/base/common/uri';
-import platform = require('vs/base/common/platform');
-import { nativeSep, normalize, isEqualOrParent, isEqual, basename, join } from 'vs/base/common/paths';
-import { endsWith, ltrim } from 'vs/base/common/strings';
+import { nativeSep, normalize, basename as pathsBasename, sep } from 'vs/base/common/paths';
+import { endsWith, ltrim, startsWithIgnoreCase, rtrim, startsWith } from 'vs/base/common/strings';
+import { Schemas } from 'vs/base/common/network';
+import { isLinux, isWindows, isMacintosh } from 'vs/base/common/platform';
+import { isEqual } from 'vs/base/common/resources';
 
-export interface ILabelProvider {
-
-	/**
-	 * Given an element returns a label for it to display in the UI.
-	 */
-	getLabel(element: any): string;
-}
-
-export interface IRootProvider {
-	getRoot(resource: URI): URI;
+export interface IWorkspaceFolderProvider {
+	getWorkspaceFolder(resource: URI): { uri: URI, name?: string };
 	getWorkspace(): {
-		roots: URI[];
+		folders: { uri: URI, name?: string }[];
 	};
 }
 
@@ -28,7 +22,10 @@ export interface IUserHomeProvider {
 	userHome: string;
 }
 
-export function getPathLabel(resource: URI | string, rootProvider?: IRootProvider, userHomeProvider?: IUserHomeProvider): string {
+/**
+ * @deprecated use UriLabelService instead
+ */
+export function getPathLabel(resource: URI | string, userHomeProvider: IUserHomeProvider, rootProvider?: IWorkspaceFolderProvider): string {
 	if (!resource) {
 		return null;
 	}
@@ -38,45 +35,98 @@ export function getPathLabel(resource: URI | string, rootProvider?: IRootProvide
 	}
 
 	// return early if we can resolve a relative path label from the root
-	const baseResource = rootProvider ? rootProvider.getRoot(resource) : null;
+	const baseResource = rootProvider ? rootProvider.getWorkspaceFolder(resource) : null;
 	if (baseResource) {
-		const hasMultipleRoots = rootProvider.getWorkspace().roots.length > 1;
+		const hasMultipleRoots = rootProvider.getWorkspace().folders.length > 1;
 
 		let pathLabel: string;
-		if (isEqual(baseResource.fsPath, resource.fsPath, !platform.isLinux /* ignorecase */)) {
-			pathLabel = ''; // no label if pathes are identical
+		if (isEqual(baseResource.uri, resource, !isLinux)) {
+			pathLabel = ''; // no label if paths are identical
 		} else {
-			pathLabel = normalize(ltrim(resource.fsPath.substr(baseResource.fsPath.length), nativeSep), true);
+			pathLabel = normalize(ltrim(resource.path.substr(baseResource.uri.path.length), sep), true);
 		}
 
 		if (hasMultipleRoots) {
-			const rootName = basename(baseResource.fsPath);
-			pathLabel = pathLabel ? join(rootName, pathLabel) : rootName; // always show root basename if there are multiple
+			const rootName = (baseResource && baseResource.name) ? baseResource.name : pathsBasename(baseResource.uri.fsPath);
+			pathLabel = pathLabel ? (rootName + ' • ' + pathLabel) : rootName; // always show root basename if there are multiple
 		}
 
 		return pathLabel;
 	}
 
+	// return if the resource is neither file:// nor untitled:// and no baseResource was provided
+	if (resource.scheme !== Schemas.file && resource.scheme !== Schemas.untitled) {
+		return resource.with({ query: null, fragment: null }).toString(true);
+	}
+
 	// convert c:\something => C:\something
-	if (platform.isWindows && resource.fsPath && resource.fsPath[1] === ':') {
-		return normalize(resource.fsPath.charAt(0).toUpperCase() + resource.fsPath.slice(1), true);
+	if (hasDriveLetter(resource.fsPath)) {
+		return normalize(normalizeDriveLetter(resource.fsPath), true);
 	}
 
 	// normalize and tildify (macOS, Linux only)
 	let res = normalize(resource.fsPath, true);
-	if (!platform.isWindows && userHomeProvider) {
+	if (!isWindows && userHomeProvider) {
 		res = tildify(res, userHomeProvider.userHome);
 	}
 
 	return res;
 }
 
-export function tildify(path: string, userHome: string): string {
-	if (path && (platform.isMacintosh || platform.isLinux) && isEqualOrParent(path, userHome, !platform.isLinux /* ignorecase */)) {
-		path = `~${path.substr(userHome.length)}`;
+export function getBaseLabel(resource: URI | string): string {
+	if (!resource) {
+		return null;
+	}
+
+	if (typeof resource === 'string') {
+		resource = URI.file(resource);
+	}
+
+	const base = pathsBasename(resource.path) || (resource.scheme === Schemas.file ? resource.fsPath : resource.path) /* can be empty string if '/' is passed in */;
+
+	// convert c: => C:
+	if (hasDriveLetter(base)) {
+		return normalizeDriveLetter(base);
+	}
+
+	return base;
+}
+
+function hasDriveLetter(path: string): boolean {
+	return isWindows && path && path[1] === ':';
+}
+
+export function normalizeDriveLetter(path: string): string {
+	if (hasDriveLetter(path)) {
+		return path.charAt(0).toUpperCase() + path.slice(1);
 	}
 
 	return path;
+}
+
+let normalizedUserHomeCached: { original: string; normalized: string } = Object.create(null);
+export function tildify(path: string, userHome: string): string {
+	if (isWindows || !path || !userHome) {
+		return path; // unsupported
+	}
+
+	// Keep a normalized user home path as cache to prevent accumulated string creation
+	let normalizedUserHome = normalizedUserHomeCached.original === userHome ? normalizedUserHomeCached.normalized : void 0;
+	if (!normalizedUserHome) {
+		normalizedUserHome = `${rtrim(userHome, sep)}${sep}`;
+		normalizedUserHomeCached = { original: userHome, normalized: normalizedUserHome };
+	}
+
+	// Linux: case sensitive, macOS: case insensitive
+	if (isLinux ? startsWith(path, normalizedUserHome) : startsWithIgnoreCase(path, normalizedUserHome)) {
+		path = `~/${path.substr(normalizedUserHome.length)}`;
+	}
+
+	return path;
+}
+
+export function untildify(path: string, userHome: string): string {
+	return path.replace(/^~($|\/|\\)/, `${userHome}$1`);
 }
 
 /**
@@ -110,6 +160,7 @@ export function tildify(path: string, userHome: string): string {
  */
 const ellipsis = '\u2026';
 const unc = '\\\\';
+const home = '~';
 export function shorten(paths: string[]): string[] {
 	const shortenedPaths: string[] = new Array(paths.length);
 
@@ -130,7 +181,7 @@ export function shorten(paths: string[]): string[] {
 
 		match = true;
 
-		// trim for now and concatenate unc path (e.g. \\network) or root path (/etc) later
+		// trim for now and concatenate unc path (e.g. \\network) or root path (/etc, ~/etc) later
 		let prefix = '';
 		if (path.indexOf(unc) === 0) {
 			prefix = path.substr(0, path.indexOf(unc) + unc.length);
@@ -138,6 +189,9 @@ export function shorten(paths: string[]): string[] {
 		} else if (path.indexOf(nativeSep) === 0) {
 			prefix = path.substr(0, path.indexOf(nativeSep) + nativeSep.length);
 			path = path.substr(path.indexOf(nativeSep) + nativeSep.length);
+		} else if (path.indexOf(home) === 0) {
+			prefix = path.substr(0, path.indexOf(home) + home.length);
+			path = path.substr(path.indexOf(home) + home.length);
 		}
 
 		// pick the first shortest subpath found
@@ -289,7 +343,7 @@ export function template(template: string, values: { [key: string]: string | ISe
 			const left = segments[index - 1];
 			const right = segments[index + 1];
 
-			return [left, right].every(segment => segment && segment.type === Type.VARIABLE && segment.value.length > 0);
+			return [left, right].every(segment => segment && (segment.type === Type.VARIABLE || segment.type === Type.TEXT) && segment.value.length > 0);
 		}
 
 		// accept any TEXT and VARIABLE
@@ -297,10 +351,34 @@ export function template(template: string, values: { [key: string]: string | ISe
 	}).map(segment => segment.value).join('');
 }
 
-export function mnemonicButtonLabel(label: string): string {
-	if (!platform.isWindows) {
-		return label.replace(/\(&&\w\)|&&/g, ''); // no mnemonic support on mac/linux
+/**
+ * Handles mnemonics for menu items. Depending on OS:
+ * - Windows: Supported via & character (replace && with &)
+ * -   Linux: Supported via & character (replace && with &)
+ * -   macOS: Unsupported (replace && with empty string)
+ */
+export function mnemonicMenuLabel(label: string, forceDisableMnemonics?: boolean): string {
+	if (isMacintosh || forceDisableMnemonics) {
+		return label.replace(/\(&&\w\)|&&/g, '');
 	}
 
 	return label.replace(/&&/g, '&');
+}
+
+/**
+ * Handles mnemonics for buttons. Depending on OS:
+ * - Windows: Supported via & character (replace && with &)
+ * -   Linux: Supported via _ character (replace && with _)
+ * -   macOS: Unsupported (replace && with empty string)
+ */
+export function mnemonicButtonLabel(label: string): string {
+	if (isMacintosh) {
+		return label.replace(/\(&&\w\)|&&/g, '');
+	}
+
+	return label.replace(/&&/g, isWindows ? '&' : '_');
+}
+
+export function unmnemonicLabel(label: string): string {
+	return label.replace(/&/g, '&&');
 }

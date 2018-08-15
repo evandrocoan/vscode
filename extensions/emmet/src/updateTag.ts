@@ -5,24 +5,24 @@
 
 import * as vscode from 'vscode';
 import { HtmlNode } from 'EmmetNode';
-import { getNode, parse, validate } from './util';
+import { getHtmlNode, parseDocument, validate } from './util';
 
-export function updateTag(tagName: string) {
-	let editor = vscode.window.activeTextEditor;
-	if (!validate(false)) {
+export function updateTag(tagName: string): Thenable<boolean> | undefined {
+	if (!validate(false) || !vscode.window.activeTextEditor) {
 		return;
 	}
-	let rootNode = <HtmlNode>parse(editor.document);
+	let editor = vscode.window.activeTextEditor;
+	let rootNode = <HtmlNode>parseDocument(editor.document);
 	if (!rootNode) {
 		return;
 	}
 
-	let rangesToUpdate = [];
+	let rangesToUpdate: vscode.Range[] = [];
 	editor.selections.reverse().forEach(selection => {
 		rangesToUpdate = rangesToUpdate.concat(getRangesToUpdate(editor, selection, rootNode));
 	});
 
-	editor.edit(editBuilder => {
+	return editor.edit(editBuilder => {
 		rangesToUpdate.forEach(range => {
 			editBuilder.replace(range, tagName);
 		});
@@ -30,7 +30,7 @@ export function updateTag(tagName: string) {
 }
 
 function getRangesToUpdate(editor: vscode.TextEditor, selection: vscode.Selection, rootNode: HtmlNode): vscode.Range[] {
-	let nodeToUpdate = <HtmlNode>getNode(rootNode, selection.start);
+	let nodeToUpdate = getHtmlNode(editor.document, rootNode, selection.start, true);
 	if (!nodeToUpdate) {
 		return [];
 	}

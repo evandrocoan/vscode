@@ -8,41 +8,73 @@ import { createDecorator } from 'vs/platform/instantiation/common/instantiation'
 export interface ParsedArgs {
 	[arg: string]: any;
 	_: string[];
+	'folder-uri'?: string | string[];
+	'file-uri'?: string | string[];
+	_urls?: string[];
 	help?: boolean;
 	version?: boolean;
+	status?: boolean;
 	wait?: boolean;
 	waitMarkerFilePath?: string;
 	diff?: boolean;
+	add?: boolean;
 	goto?: boolean;
 	'new-window'?: boolean;
-	/**
-	 * Always open a new window, except if opening the first window or opening a file or folder as part of the launch.
-	 */
-	'unity-launch'?: boolean;
+	'unity-launch'?: boolean; // Always open a new window, except if opening the first window or opening a file or folder as part of the launch.
 	'reuse-window'?: boolean;
 	locale?: string;
 	'user-data-dir'?: string;
 	performance?: boolean;
 	'prof-startup'?: string;
+	'prof-startup-prefix'?: string;
+	'prof-append-timers'?: string;
 	verbose?: boolean;
+	log?: string;
 	logExtensionHostCommunication?: boolean;
-	'disable-extensions'?: boolean;
 	'extensions-dir'?: string;
 	extensionDevelopmentPath?: string;
 	extensionTestsPath?: string;
+	debugPluginHost?: string;
 	debugBrkPluginHost?: string;
 	debugId?: string;
-	debugPluginHost?: string;
+	debugSearch?: string;
+	debugBrkSearch?: string;
+	'disable-extensions'?: boolean;
+	'disable-extension'?: string | string[];
 	'list-extensions'?: boolean;
 	'show-versions'?: boolean;
 	'install-extension'?: string | string[];
 	'uninstall-extension'?: string | string[];
 	'enable-proposed-api'?: string | string[];
-	'open-url'?: string | string[];
+	'open-url'?: boolean;
 	'skip-getting-started'?: boolean;
+	'skip-release-notes'?: boolean;
+	'sticky-quickopen'?: boolean;
+	'disable-restore-windows'?: boolean;
+	'disable-telemetry'?: boolean;
+	'export-default-configuration'?: string;
+	'install-source'?: string;
+	'disable-updates'?: string;
+	'disable-crash-reporter'?: string;
+	'skip-add-to-recently-opened'?: boolean;
+	'max-memory'?: number;
+	'file-write'?: boolean;
+	'file-chmod'?: boolean;
+	'upload-logs'?: string;
+	'driver'?: string;
+	'driver-verbose'?: boolean;
 }
 
 export const IEnvironmentService = createDecorator<IEnvironmentService>('environmentService');
+
+export interface IDebugParams {
+	port: number;
+	break: boolean;
+}
+
+export interface IExtensionHostDebugParams extends IDebugParams {
+	debugId: string;
+}
 
 export interface IEnvironmentService {
 	_serviceBrand: any;
@@ -50,6 +82,7 @@ export interface IEnvironmentService {
 	args: ParsedArgs;
 
 	execPath: string;
+	cliPath: string;
 	appRoot: string;
 
 	userHome: string;
@@ -61,32 +94,50 @@ export interface IEnvironmentService {
 	appSettingsPath: string;
 	appKeybindingsPath: string;
 
+	settingsSearchBuildId: number;
+	settingsSearchUrl: string;
+
 	backupHome: string;
 	backupWorkspacesPath: string;
 
 	workspacesHome: string;
 
 	isExtensionDevelopment: boolean;
-	disableExtensions: boolean;
+	disableExtensions: boolean | string[];
 	extensionsPath: string;
 	extensionDevelopmentPath: string;
 	extensionTestsPath: string;
 
-	debugExtensionHost: { port: number; break: boolean; debugId: string };
+	debugExtensionHost: IExtensionHostDebugParams;
+	debugSearch: IDebugParams;
 
 
 	logExtensionHostCommunication: boolean;
 
 	isBuilt: boolean;
-	verbose: boolean;
 	wait: boolean;
+	status: boolean;
 	performance: boolean;
-	profileStartup: { prefix: string, dir: string } | undefined;
+
+	// logging
+	log: string;
+	logsPath: string;
+	verbose: boolean;
 
 	skipGettingStarted: boolean | undefined;
+	skipReleaseNotes: boolean | undefined;
+
+	skipAddToRecentlyOpened: boolean;
 
 	mainIPCHandle: string;
 	sharedIPCHandle: string;
 
 	nodeCachedDataDir: string;
+
+	installSourcePath: string;
+	disableUpdates: boolean;
+	disableCrashReporter: boolean;
+
+	driverHandle: string;
+	driverVerbose: boolean;
 }

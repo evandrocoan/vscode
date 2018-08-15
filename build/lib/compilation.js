@@ -18,14 +18,21 @@ var _ = require("underscore");
 var monacodts = require("../monaco/api");
 var fs = require("fs");
 var reporter = reporter_1.createReporter();
-var rootDir = path.join(__dirname, '../../src');
-var options = require('../../src/tsconfig.json').compilerOptions;
-options.verbose = false;
-options.sourceMap = true;
-options.rootDir = rootDir;
-options.sourceRoot = util.toFileUri(rootDir);
-function createCompile(build, emitError) {
-    var opts = _.clone(options);
+function getTypeScriptCompilerOptions(src) {
+    var rootDir = path.join(__dirname, "../../" + src);
+    var options = require("../../" + src + "/tsconfig.json").compilerOptions;
+    options.verbose = false;
+    options.sourceMap = true;
+    if (process.env['VSCODE_NO_SOURCEMAP']) { // To be used by developers in a hurry
+        options.sourceMap = false;
+    }
+    options.rootDir = rootDir;
+    options.sourceRoot = util.toFileUri(rootDir);
+    options.newLine = /\r\n/.test(fs.readFileSync(__filename, 'utf8')) ? 'CRLF' : 'LF';
+    return options;
+}
+function createCompile(src, build, emitError) {
+    var opts = _.clone(getTypeScriptCompilerOptions(src));
     opts.inlineSources = !!build;
     opts.noFilesystemLookup = true;
     var ts = tsb.create(opts, null, null, function (err) { return reporter(err.toString()); });
@@ -47,77 +54,46 @@ function createCompile(build, emitError) {
             .pipe(sourcemaps.write('.', {
             addComment: false,
             includeContent: !!build,
-            sourceRoot: options.sourceRoot
+            sourceRoot: opts.sourceRoot
         }))
             .pipe(tsFilter.restore)
             .pipe(reporter.end(emitError));
         return es.duplex(input, output);
     };
 }
-function compileTask(out, build) {
+function compileTask(src, out, build) {
     return function () {
-        var compile = createCompile(build, true);
-        var src = es.merge(gulp.src('src/**', { base: 'src' }), gulp.src('node_modules/typescript/lib/lib.d.ts'));
-        return src
+        var compile = createCompile(src, build, true);
+        var srcPipe = es.merge(gulp.src(src + "/**", { base: "" + src }), gulp.src('node_modules/typescript/lib/lib.d.ts'));
+        // Do not write .d.ts files to disk, as they are not needed there.
+        var dtsFilter = util.filter(function (data) { return !/\.d\.ts$/.test(data.path); });
+        return srcPipe
             .pipe(compile())
+            .pipe(dtsFilter)
             .pipe(gulp.dest(out))
-            .pipe(monacodtsTask(out, false));
+            .pipe(dtsFilter.restore)
+            .pipe(src !== 'src' ? es.through() : monacodtsTask(out, false));
     };
 }
 exports.compileTask = compileTask;
 function watchTask(out, build) {
     return function () {
-        var compile = createCompile(build);
+        var compile = createCompile('src', build);
         var src = es.merge(gulp.src('src/**', { base: 'src' }), gulp.src('node_modules/typescript/lib/lib.d.ts'));
         var watchSrc = watch('src/**', { base: 'src' });
+        // Do not write .d.ts files to disk, as they are not needed there.
+        var dtsFilter = util.filter(function (data) { return !/\.d\.ts$/.test(data.path); });
         return watchSrc
             .pipe(util.incremental(compile, src, true))
+            .pipe(dtsFilter)
             .pipe(gulp.dest(out))
+            .pipe(dtsFilter.restore)
             .pipe(monacodtsTask(out, true));
     };
 }
 exports.watchTask = watchTask;
-function reloadTypeScriptNodeModule() {
-    var util = require('gulp-util');
-    function log(message) {
-        var rest = [];
-        for (var _i = 1; _i < arguments.length; _i++) {
-            rest[_i - 1] = arguments[_i];
-        }
-        util.log.apply(util, [util.colors.cyan('[memory watch dog]'), message].concat(rest));
-    }
-    function heapUsed() {
-        return (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + ' MB';
-    }
-    return es.through(function (data) {
-        this.emit('data', data);
-    }, function () {
-        log('memory usage after compilation finished: ' + heapUsed());
-        // It appears we are running into some variant of
-        // https://bugs.chromium.org/p/v8/issues/detail?id=2073
-        //
-        // Even though all references are dropped, some
-        // optimized methods in the TS compiler end up holding references
-        // to the entire TypeScript language host (>600MB)
-        //
-        // The idea is to force v8 to drop references to these
-        // optimized methods, by "reloading" the typescript node module
-        log('Reloading typescript node module...');
-        var resolvedName = require.resolve('typescript');
-        var originalModule = require.cache[resolvedName];
-        delete require.cache[resolvedName];
-        var newExports = require('typescript');
-        require.cache[resolvedName] = originalModule;
-        for (var prop in newExports) {
-            if (newExports.hasOwnProperty(prop)) {
-                originalModule.exports[prop] = newExports[prop];
-            }
-        }
-        log('typescript node module reloaded.');
-        this.emit('end');
-    });
-}
 function monacodtsTask(out, isWatch) {
+    var basePath = path.resolve(process.cwd(), out);
     var neededFiles = {};
     monacodts.getFilesToWatch(out).forEach(function (filePath) {
         filePath = path.normalize(filePath);
@@ -149,6 +125,7 @@ function monacodtsTask(out, isWatch) {
                 fs.writeFileSync(result.filePath, result.content);
             }
             else {
+                fs.writeFileSync(result.filePath, result.content);
                 resultStream.emit('error', 'monaco.d.ts is no longer up to date. Please run gulp watch and commit the new file.');
             }
         }
@@ -160,7 +137,7 @@ function monacodtsTask(out, isWatch) {
         }));
     }
     resultStream = es.through(function (data) {
-        var filePath = path.normalize(data.path);
+        var filePath = path.normalize(path.resolve(basePath, data.relative));
         if (neededFiles[filePath]) {
             setInputFile(filePath, data.contents.toString());
         }

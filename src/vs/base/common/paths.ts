@@ -4,9 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import { isLinux, isWindows } from 'vs/base/common/platform';
-import { fill } from 'vs/base/common/arrays';
-import { rtrim, beginsWithIgnoreCase, equalsIgnoreCase } from 'vs/base/common/strings';
+import { isWindows } from 'vs/base/common/platform';
+import { startsWithIgnoreCase, equalsIgnoreCase } from 'vs/base/common/strings';
 import { CharCode } from 'vs/base/common/charCode';
 
 /**
@@ -19,48 +18,24 @@ export const sep = '/';
  */
 export const nativeSep = isWindows ? '\\' : '/';
 
-export function relative(from: string, to: string): string {
-	// ignore trailing slashes
-	const originalNormalizedFrom = rtrim(normalize(from), sep);
-	const originalNormalizedTo = rtrim(normalize(to), sep);
-
-	// we're assuming here that any non=linux OS is case insensitive
-	// so we must compare each part in its lowercase form
-	const normalizedFrom = isLinux ? originalNormalizedFrom : originalNormalizedFrom.toLowerCase();
-	const normalizedTo = isLinux ? originalNormalizedTo : originalNormalizedTo.toLowerCase();
-
-	const fromParts = normalizedFrom.split(sep);
-	const toParts = normalizedTo.split(sep);
-
-	let i = 0, max = Math.min(fromParts.length, toParts.length);
-
-	for (; i < max; i++) {
-		if (fromParts[i] !== toParts[i]) {
-			break;
-		}
-	}
-
-	const result = [
-		...fill(fromParts.length - i, () => '..'),
-		...originalNormalizedTo.split(sep).slice(i)
-	];
-
-	return result.join(sep);
-}
-
 /**
+ * @param path the path to get the dirname from
+ * @param separator the separator to use
  * @returns the directory name of a path.
+ *
  */
-export function dirname(path: string): string {
+export function dirname(path: string, separator = nativeSep): string {
 	const idx = ~path.lastIndexOf('/') || ~path.lastIndexOf('\\');
 	if (idx === 0) {
 		return '.';
 	} else if (~idx === 0) {
 		return path[0];
+	} else if (~idx === path.length - 1) {
+		return dirname(path.substring(0, path.length - 1));
 	} else {
 		let res = path.substring(0, ~idx);
 		if (isWindows && res[res.length - 1] === ':') {
-			res += nativeSep; // make sure drive letters end with backslash
+			res += separator; // make sure drive letters end with backslash
 		}
 		return res;
 	}
@@ -81,7 +56,7 @@ export function basename(path: string): string {
 }
 
 /**
- * @returns {{.far}} from boo.far or the empty string.
+ * @returns `.far` from `boo.far` or the empty string.
  */
 export function extname(path: string): string {
 	path = basename(path);
@@ -356,7 +331,7 @@ export function isEqual(pathA: string, pathB: string, ignoreCase?: boolean): boo
 	return equalsIgnoreCase(pathA, pathB);
 }
 
-export function isEqualOrParent(path: string, candidate: string, ignoreCase?: boolean): boolean {
+export function isEqualOrParent(path: string, candidate: string, ignoreCase?: boolean, separator = nativeSep): boolean {
 	if (path === candidate) {
 		return true;
 	}
@@ -370,7 +345,7 @@ export function isEqualOrParent(path: string, candidate: string, ignoreCase?: bo
 	}
 
 	if (ignoreCase) {
-		const beginsWith = beginsWithIgnoreCase(path, candidate);
+		const beginsWith = startsWithIgnoreCase(path, candidate);
 		if (!beginsWith) {
 			return false;
 		}
@@ -380,15 +355,15 @@ export function isEqualOrParent(path: string, candidate: string, ignoreCase?: bo
 		}
 
 		let sepOffset = candidate.length;
-		if (candidate.charAt(candidate.length - 1) === nativeSep) {
+		if (candidate.charAt(candidate.length - 1) === separator) {
 			sepOffset--; // adjust the expected sep offset in case our candidate already ends in separator character
 		}
 
-		return path.charAt(sepOffset) === nativeSep;
+		return path.charAt(sepOffset) === separator;
 	}
 
-	if (candidate.charAt(candidate.length - 1) !== nativeSep) {
-		candidate += nativeSep;
+	if (candidate.charAt(candidate.length - 1) !== separator) {
+		candidate += separator;
 	}
 
 	return path.indexOf(candidate) === 0;

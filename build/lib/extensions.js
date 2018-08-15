@@ -20,7 +20,7 @@ var vsce = require("vsce");
 var File = require("vinyl");
 function fromLocal(extensionPath) {
     var result = es.through();
-    vsce.listFiles({ cwd: extensionPath })
+    vsce.listFiles({ cwd: extensionPath, packageManager: vsce.PackageManager.Yarn })
         .then(function (fileNames) {
         var files = fileNames
             .map(function (fileName) { return path.join(extensionPath, fileName); })
@@ -44,6 +44,7 @@ function error(err) {
 var baseHeaders = {
     'X-Market-Client-Id': 'VSCode Build',
     'User-Agent': 'VSCode Build',
+    'X-Market-User-Id': '291C1CD0-051A-4123-9B4B-30D60EF52EE2',
 };
 function fromMarketplace(extensionName, version) {
     var filterType = 7;

@@ -142,12 +142,12 @@ export class GlyphMarginOverlay extends DedupOverlay {
 
 	protected _getDecorations(ctx: RenderingContext): DecorationToRender[] {
 		let decorations = ctx.getDecorationsInViewport();
-		let r: DecorationToRender[] = [];
+		let r: DecorationToRender[] = [], rLen = 0;
 		for (let i = 0, len = decorations.length; i < len; i++) {
 			let d = decorations[i];
-			let glyphMarginClassName = d.source.options.glyphMarginClassName;
+			let glyphMarginClassName = d.options.glyphMarginClassName;
 			if (glyphMarginClassName) {
-				r.push(new DecorationToRender(d.range.startLineNumber, d.range.endLineNumber, glyphMarginClassName));
+				r[rLen++] = new DecorationToRender(d.range.startLineNumber, d.range.endLineNumber, glyphMarginClassName);
 			}
 		}
 		return r;
@@ -193,7 +193,7 @@ export class GlyphMarginOverlay extends DedupOverlay {
 		}
 		let lineIndex = lineNumber - startLineNumber;
 		if (lineIndex < 0 || lineIndex >= this._renderResult.length) {
-			throw new Error('Unexpected render request');
+			return '';
 		}
 		return this._renderResult[lineIndex];
 	}

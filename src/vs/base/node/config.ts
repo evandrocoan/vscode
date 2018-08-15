@@ -6,11 +6,13 @@
 'use strict';
 
 import * as fs from 'fs';
-import * as path from 'path';
+import { dirname, basename } from 'path';
 import * as objects from 'vs/base/common/objects';
 import { IDisposable, dispose, toDisposable } from 'vs/base/common/lifecycle';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import * as json from 'vs/base/common/json';
+import * as extfs from 'vs/base/node/extfs';
+import { isWindows } from 'vs/base/common/platform';
 
 export interface IConfigurationChangeEvent<T> {
 	config: T;
@@ -48,10 +50,12 @@ export class ConfigWatcher<T> implements IConfigWatcher<T>, IDisposable {
 	private loaded: boolean;
 	private timeoutHandle: NodeJS.Timer;
 	private disposables: IDisposable[];
-	private _onDidUpdateConfiguration: Emitter<IConfigurationChangeEvent<T>>;
+	private readonly _onDidUpdateConfiguration: Emitter<IConfigurationChangeEvent<T>>;
+	private configName: string;
 
 	constructor(private _path: string, private options: IConfigOptions<T> = { changeBufferDelay: 0, defaultConfig: Object.create(null), onError: error => console.error(error) }) {
 		this.disposables = [];
+		this.configName = basename(this._path);
 
 		this._onDidUpdateConfiguration = new Emitter<IConfigurationChangeEvent<T>>();
 		this.disposables.push(this._onDidUpdateConfiguration);
@@ -121,8 +125,8 @@ export class ConfigWatcher<T> implements IConfigWatcher<T>, IDisposable {
 	private registerWatcher(): void {
 
 		// Watch the parent of the path so that we detect ADD and DELETES
-		const parentFolder = path.dirname(this._path);
-		this.watch(parentFolder);
+		const parentFolder = dirname(this._path);
+		this.watch(parentFolder, true);
 
 		// Check if the path is a symlink and watch its target if so
 		fs.lstat(this._path, (err, stat) => {
@@ -137,36 +141,45 @@ export class ConfigWatcher<T> implements IConfigWatcher<T>, IDisposable {
 						return; // path is not a valid symlink
 					}
 
-					this.watch(realPath);
+					this.watch(realPath, false);
 				});
 			}
 		});
 	}
 
-	private watch(path: string): void {
+	private watch(path: string, isParentFolder: boolean): void {
 		if (this.disposed) {
 			return; // avoid watchers that will never get disposed by checking for being disposed
 		}
 
-		try {
-			const watcher = fs.watch(path);
-			watcher.on('change', () => this.onConfigFileChange());
-			watcher.on('error', (code, signal) => this.options.onError(`Error watching ${path} for configuration changes (${code}, ${signal})`));
+		const watcher = extfs.watch(path,
+			(type, file) => this.onConfigFileChange(type, file, isParentFolder),
+			(error: string) => this.options.onError(error)
+		);
 
+		if (watcher) {
 			this.disposables.push(toDisposable(() => {
 				watcher.removeAllListeners();
 				watcher.close();
 			}));
-		} catch (error) {
-			fs.exists(path, exists => {
-				if (exists) {
-					this.options.onError(`Failed to watch ${path} for configuration changes (${error.toString()})`);
-				}
-			});
 		}
 	}
 
-	private onConfigFileChange(): void {
+	private onConfigFileChange(eventType: string, filename: string, isParentFolder: boolean): void {
+		if (isParentFolder) {
+
+			// Windows: in some cases the filename contains artifacts from the absolute path
+			// see https://github.com/nodejs/node/issues/19170
+			// As such, we have to ensure that the filename basename is used for comparison.
+			if (isWindows && filename && filename !== this.configName) {
+				filename = basename(filename);
+			}
+
+			if (filename !== this.configName) {
+				return; // a change to a sibling file that is not our config file
+			}
+		}
+
 		if (this.timeoutHandle) {
 			global.clearTimeout(this.timeoutHandle);
 			this.timeoutHandle = null;
@@ -203,7 +216,7 @@ export class ConfigWatcher<T> implements IConfigWatcher<T>, IDisposable {
 			return fallback;
 		}
 
-		const value = this.cache ? this.cache[key] : void 0;
+		const value = this.cache ? (this.cache as any)[key] : void 0;
 
 		return typeof value !== 'undefined' ? value : fallback;
 	}

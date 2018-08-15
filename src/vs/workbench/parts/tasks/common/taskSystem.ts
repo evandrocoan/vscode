@@ -4,11 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import URI from 'vs/base/common/uri';
 import Severity from 'vs/base/common/severity';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { TerminateResponse } from 'vs/base/common/processes';
-import { IEventEmitter } from 'vs/base/common/eventEmitter';
-import { Task } from './tasks';
+import { Event } from 'vs/base/common/event';
+import { Platform } from 'vs/base/common/platform';
+
+import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+
+import { Task, TaskEvent, KeyedTaskIdentifier } from './tasks';
 
 export enum TaskErrors {
 	NotConfigured,
@@ -33,11 +38,23 @@ export class TaskError {
 	}
 }
 
+/* __GDPR__FRAGMENT__
+	"TelemetryEvent" : {
+		"trigger" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"runner": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"taskKind": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"command": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+		"success": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+		"exitCode": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true }
+	}
+*/
 export interface TelemetryEvent {
 	// How the task got trigger. Is either shortcut or command
 	trigger: string;
 
 	runner: 'terminal' | 'output';
+
+	taskKind: string;
 
 	// The command triggered
 	command: string;
@@ -78,41 +95,33 @@ export interface ITaskExecuteResult {
 	};
 }
 
-export namespace TaskSystemEvents {
-	export let Active: string = 'active';
-	export let Inactive: string = 'inactive';
-	export let Terminated: string = 'terminated';
-	export let Changed: string = 'changed';
-}
-
-export enum TaskType {
-	SingleRun,
-	Watching
-}
-
-export interface TaskEvent {
-	taskId?: string;
-	taskName?: string;
-	type?: TaskType;
-	group?: string;
-	__task?: Task;
-}
-
 export interface ITaskResolver {
-	resolve(identifier: string): Task;
+	resolve(workspaceFolder: IWorkspaceFolder, identifier: string | KeyedTaskIdentifier): Task;
 }
 
 export interface TaskTerminateResponse extends TerminateResponse {
 	task: Task | undefined;
 }
 
-export interface ITaskSystem extends IEventEmitter {
+export interface TaskSystemInfo {
+	platform: Platform;
+	context: any;
+	uriProvider: (this: void, path: string) => URI;
+	resolveVariables(workspaceFolder: IWorkspaceFolder, variables: Set<string>): TPromise<Map<string, string>>;
+}
+
+export interface TaskSystemInfoResovler {
+	(workspaceFolder: IWorkspaceFolder): TaskSystemInfo;
+}
+
+export interface ITaskSystem {
+	onDidStateChange: Event<TaskEvent>;
 	run(task: Task, resolver: ITaskResolver): ITaskExecuteResult;
 	isActive(): TPromise<boolean>;
 	isActiveSync(): boolean;
 	getActiveTasks(): Task[];
 	canAutoTerminate(): boolean;
-	terminate(id: string): TPromise<TaskTerminateResponse>;
+	terminate(task: Task): TPromise<TaskTerminateResponse>;
 	terminateAll(): TPromise<TaskTerminateResponse[]>;
 	revealTask(task: Task): boolean;
 }

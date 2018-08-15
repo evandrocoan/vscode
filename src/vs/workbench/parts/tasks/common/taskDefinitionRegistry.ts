@@ -11,7 +11,7 @@ import { TPromise } from 'vs/base/common/winjs.base';
 import * as Types from 'vs/base/common/types';
 import * as Objects from 'vs/base/common/objects';
 
-import { ExtensionsRegistry, ExtensionMessageCollector } from 'vs/platform/extensions/common/extensionsRegistry';
+import { ExtensionsRegistry, ExtensionMessageCollector } from 'vs/workbench/services/extensions/common/extensionsRegistry';
 
 import * as Tasks from 'vs/workbench/parts/tasks/common/tasks';
 
@@ -22,7 +22,7 @@ const taskDefinitionSchema: IJSONSchema = {
 	properties: {
 		type: {
 			type: 'string',
-			description: nls.localize('TaskDefinition.description', 'The actual task type')
+			description: nls.localize('TaskDefinition.description', 'The actual task type. Please note that types starting with a \'$\' are reserved for internal usage.')
 		},
 		required: {
 			type: 'array',
@@ -47,7 +47,7 @@ namespace Configuration {
 		properties?: IJSONSchemaMap;
 	}
 
-	export function from(value: TaskDefinition, messageCollector: ExtensionMessageCollector): Tasks.TaskDefinition {
+	export function from(value: TaskDefinition, extensionId: string, messageCollector: ExtensionMessageCollector): Tasks.TaskDefinition {
 		if (!value) {
 			return undefined;
 		}
@@ -64,7 +64,7 @@ namespace Configuration {
 				}
 			}
 		}
-		return { taskType, required: required.length >= 0 ? required : undefined, properties: value.properties ? Objects.deepClone(value.properties) : undefined };
+		return { extensionId, taskType, required: required, properties: value.properties ? Objects.deepClone(value.properties) : {} };
 	}
 }
 
@@ -78,35 +78,36 @@ const taskDefinitionsExtPoint = ExtensionsRegistry.registerExtensionPoint<Config
 export interface ITaskDefinitionRegistry {
 	onReady(): TPromise<void>;
 
-	exists(key: string): boolean;
 	get(key: string): Tasks.TaskDefinition;
 	all(): Tasks.TaskDefinition[];
+	getJsonSchema(): IJSONSchema;
 }
 
 class TaskDefinitionRegistryImpl implements ITaskDefinitionRegistry {
 
 	private taskTypes: IStringDictionary<Tasks.TaskDefinition>;
 	private readyPromise: TPromise<void>;
+	private _schema: IJSONSchema;
 
 	constructor() {
 		this.taskTypes = Object.create(null);
 		this.readyPromise = new TPromise<void>((resolve, reject) => {
 			taskDefinitionsExtPoint.setHandler((extensions) => {
 				try {
-					extensions.forEach(extension => {
+					for (let extension of extensions) {
 						let taskTypes = extension.value;
 						for (let taskType of taskTypes) {
-							let type = Configuration.from(taskType, extension.collector);
+							let type = Configuration.from(taskType, extension.description.id, extension.collector);
 							if (type) {
 								this.taskTypes[type.taskType] = type;
 							}
 						}
-					});
+					}
 				} catch (error) {
 				}
 				resolve(undefined);
 			});
-		});
+		}, () => { });
 	}
 
 	public onReady(): TPromise<void> {
@@ -117,12 +118,35 @@ class TaskDefinitionRegistryImpl implements ITaskDefinitionRegistry {
 		return this.taskTypes[key];
 	}
 
-	public exists(key: string): boolean {
-		return !!this.taskTypes[key];
-	}
-
 	public all(): Tasks.TaskDefinition[] {
 		return Object.keys(this.taskTypes).map(key => this.taskTypes[key]);
+	}
+
+	public getJsonSchema(): IJSONSchema {
+		if (this._schema === void 0) {
+			let schemas: IJSONSchema[] = [];
+			for (let definition of this.all()) {
+				let schema: IJSONSchema = {
+					type: 'object',
+					additionalProperties: false
+				};
+				if (definition.required.length > 0) {
+					schema.required = definition.required.slice(0);
+				}
+				if (definition.properties !== void 0) {
+					schema.properties = Objects.deepClone(definition.properties);
+				} else {
+					schema.properties = Object.create(null);
+				}
+				schema.properties.type = {
+					type: 'string',
+					enum: [definition.taskType]
+				};
+				schemas.push(schema);
+			}
+			this._schema = { oneOf: schemas };
+		}
+		return this._schema;
 	}
 }
 

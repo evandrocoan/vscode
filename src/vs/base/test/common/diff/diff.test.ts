@@ -6,21 +6,19 @@
 
 
 import * as assert from 'assert';
-import { LcsDiff, IDiffChange } from 'vs/base/common/diff/diff';
-import { LcsDiff2 } from 'vs/base/common/diff/diff2';
+import { LcsDiff, IDiffChange, ISequence } from 'vs/base/common/diff/diff';
 
-class StringDiffSequence {
+class StringDiffSequence implements ISequence {
 
 	constructor(private source: string) {
-
 	}
 
 	getLength() {
 		return this.source.length;
 	}
 
-	getElementHash(i: number) {
-		return this.source.charAt(i);
+	getElementAtIndex(i: number) {
+		return this.source.charCodeAt(i);
 	}
 }
 
@@ -115,11 +113,6 @@ suite('Diff', () => {
 	test('LcsDiff - different strings tests', function () {
 		this.timeout(10000);
 		lcsTests(LcsDiff);
-	});
-
-	test('LcsDiff2 - different strings tests', function () {
-		this.timeout(10000);
-		lcsTests(LcsDiff2);
 	});
 });
 

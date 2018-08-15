@@ -12,10 +12,25 @@ const glob = require('glob');
 const minimatch = require('minimatch');
 const istanbul = require('istanbul');
 const i_remap = require('remap-istanbul/lib/remap');
+const util = require('util');
+
+// Disabled custom inspect. See #38847
+if (util.inspect && util.inspect['defaultOptions']) {
+	util.inspect['defaultOptions'].customInspect = false;
+}
 
 let _tests_glob = '**/test/**/*.test.js';
 let loader;
 let _out;
+
+function uriFromPath(_path) {
+	var pathName = path.resolve(_path).replace(/\\/g, '/');
+	if (pathName.length > 0 && pathName.charAt(0) !== '/') {
+		pathName = '/' + pathName;
+	}
+
+	return encodeURI('file://' + pathName);
+}
 
 function initLoader(opts) {
 	let outdir = opts.build ? 'out-build' : 'out';
@@ -27,7 +42,7 @@ function initLoader(opts) {
 		nodeRequire: require,
 		nodeMain: __filename,
 		catchError: true,
-		baseUrl: path.join(__dirname, '../../src'),
+		baseUrl: uriFromPath(path.join(__dirname, '../../src')),
 		paths: {
 			'vs': `../${outdir}/vs`,
 			'lib': `../${outdir}/lib`,
@@ -181,6 +196,9 @@ function loadTests(opts) {
 
 function serializeSuite(suite) {
 	return {
+		root: suite.root,
+		suites: suite.suites.map(serializeSuite),
+		tests: suite.tests.map(serializeRunnable),
 		title: suite.title,
 		fullTitle: suite.fullTitle(),
 		timeout: suite.timeout(),
@@ -261,5 +279,5 @@ function runTests(opts) {
 
 ipcRenderer.on('run', (e, opts) => {
 	initLoader(opts);
-	runTests(opts).catch(err => console.error(err));
+	runTests(opts).catch(err => console.error(typeof err === 'string' ? err : JSON.stringify(err)));
 });

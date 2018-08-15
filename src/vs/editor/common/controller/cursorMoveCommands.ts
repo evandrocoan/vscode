@@ -14,22 +14,30 @@ import { ICommandHandlerDescription } from 'vs/platform/commands/common/commands
 
 export class CursorMoveCommands {
 
-	public static addCursorDown(context: CursorContext, cursors: CursorState[]): CursorState[] {
+	public static addCursorDown(context: CursorContext, cursors: CursorState[], useLogicalLine: boolean): CursorState[] {
 		let result: CursorState[] = [], resultLen = 0;
 		for (let i = 0, len = cursors.length; i < len; i++) {
 			const cursor = cursors[i];
 			result[resultLen++] = new CursorState(cursor.modelState, cursor.viewState);
-			result[resultLen++] = CursorState.fromViewState(MoveOperations.translateDown(context.config, context.viewModel, cursor.viewState));
+			if (useLogicalLine) {
+				result[resultLen++] = CursorState.fromModelState(MoveOperations.translateDown(context.config, context.model, cursor.modelState));
+			} else {
+				result[resultLen++] = CursorState.fromViewState(MoveOperations.translateDown(context.config, context.viewModel, cursor.viewState));
+			}
 		}
 		return result;
 	}
 
-	public static addCursorUp(context: CursorContext, cursors: CursorState[]): CursorState[] {
+	public static addCursorUp(context: CursorContext, cursors: CursorState[], useLogicalLine: boolean): CursorState[] {
 		let result: CursorState[] = [], resultLen = 0;
 		for (let i = 0, len = cursors.length; i < len; i++) {
 			const cursor = cursors[i];
 			result[resultLen++] = new CursorState(cursor.modelState, cursor.viewState);
-			result[resultLen++] = CursorState.fromViewState(MoveOperations.translateUp(context.config, context.viewModel, cursor.viewState));
+			if (useLogicalLine) {
+				result[resultLen++] = CursorState.fromModelState(MoveOperations.translateUp(context.config, context.model, cursor.modelState));
+			} else {
+				result[resultLen++] = CursorState.fromViewState(MoveOperations.translateUp(context.config, context.viewModel, cursor.viewState));
+			}
 		}
 		return result;
 	}
@@ -155,22 +163,6 @@ export class CursorMoveCommands {
 	}
 
 	public static selectAll(context: CursorContext, cursor: CursorState): CursorState {
-
-		if (context.model.hasEditableRange()) {
-			// Toggle between selecting editable range and selecting the entire buffer
-
-			const editableRange = context.model.getEditableRange();
-			const selection = cursor.modelState.selection;
-
-			if (!selection.equalsRange(editableRange)) {
-				// Selection is not editable range => select editable range
-				return CursorState.fromModelState(new SingleCursorState(
-					new Range(editableRange.startLineNumber, editableRange.startColumn, editableRange.startLineNumber, editableRange.startColumn), 0,
-					new Position(editableRange.endLineNumber, editableRange.endColumn), 0
-				));
-			}
-		}
-
 		const lineCount = context.model.getLineCount();
 		const maxColumn = context.model.getLineMaxColumn(lineCount);
 
@@ -418,7 +410,19 @@ export class CursorMoveCommands {
 		let result: CursorState[] = [];
 		for (let i = 0, len = cursors.length; i < len; i++) {
 			const cursor = cursors[i];
-			result[i] = CursorState.fromViewState(MoveOperations.moveLeft(context.config, context.viewModel, cursor.viewState, inSelectionMode, noOfColumns));
+
+			let newViewState = MoveOperations.moveLeft(context.config, context.viewModel, cursor.viewState, inSelectionMode, noOfColumns);
+
+			if (noOfColumns === 1 && newViewState.position.lineNumber !== cursor.viewState.position.lineNumber) {
+				// moved over to the previous view line
+				const newViewModelPosition = context.viewModel.coordinatesConverter.convertViewPositionToModelPosition(newViewState.position);
+				if (newViewModelPosition.lineNumber === cursor.modelState.position.lineNumber) {
+					// stayed on the same model line => pass wrapping point where 2 view positions map to a single model position
+					newViewState = MoveOperations.moveLeft(context.config, context.viewModel, newViewState, inSelectionMode, 1);
+				}
+			}
+
+			result[i] = CursorState.fromViewState(newViewState);
 		}
 		return result;
 	}
@@ -438,7 +442,18 @@ export class CursorMoveCommands {
 		let result: CursorState[] = [];
 		for (let i = 0, len = cursors.length; i < len; i++) {
 			const cursor = cursors[i];
-			result[i] = CursorState.fromViewState(MoveOperations.moveRight(context.config, context.viewModel, cursor.viewState, inSelectionMode, noOfColumns));
+			let newViewState = MoveOperations.moveRight(context.config, context.viewModel, cursor.viewState, inSelectionMode, noOfColumns);
+
+			if (noOfColumns === 1 && newViewState.position.lineNumber !== cursor.viewState.position.lineNumber) {
+				// moved over to the next view line
+				const newViewModelPosition = context.viewModel.coordinatesConverter.convertViewPositionToModelPosition(newViewState.position);
+				if (newViewModelPosition.lineNumber === cursor.modelState.position.lineNumber) {
+					// stayed on the same model line => pass wrapping point where 2 view positions map to a single model position
+					newViewState = MoveOperations.moveRight(context.config, context.viewModel, newViewState, inSelectionMode, 1);
+				}
+			}
+
+			result[i] = CursorState.fromViewState(newViewState);
 		}
 		return result;
 	}
@@ -592,7 +607,7 @@ export namespace CursorMove {
 						\`\`\`
 						'left', 'right', 'up', 'down'
 						'wrappedLineStart', 'wrappedLineEnd', 'wrappedLineColumnCenter'
-						'wrappedLineFirstNonWhitespaceCharacter', 'wrappedLineLastNonWhitespaceCharacter',
+						'wrappedLineFirstNonWhitespaceCharacter', 'wrappedLineLastNonWhitespaceCharacter'
 						'viewPortTop', 'viewPortCenter', 'viewPortBottom', 'viewPortIfOutside'
 						\`\`\`
 					* 'by': Unit to move. Default is computed based on 'to' value.
@@ -647,7 +662,7 @@ export namespace CursorMove {
 		select?: boolean;
 		by?: string;
 		value?: number;
-	};
+	}
 
 	export function parse(args: RawArguments): ParsedArguments {
 		if (!args.to) {
@@ -730,7 +745,7 @@ export namespace CursorMove {
 		unit: Unit;
 		select: boolean;
 		value: number;
-	};
+	}
 
 	export const enum Direction {
 		Left,
@@ -749,7 +764,7 @@ export namespace CursorMove {
 		ViewPortBottom,
 
 		ViewPortIfOutside,
-	};
+	}
 
 	export const enum Unit {
 		None,
@@ -757,6 +772,6 @@ export namespace CursorMove {
 		WrappedLine,
 		Character,
 		HalfLine,
-	};
+	}
 
 }

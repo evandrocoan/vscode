@@ -11,6 +11,7 @@ import { Composite, CompositeDescriptor, CompositeRegistry } from 'vs/workbench/
 import { Action } from 'vs/base/common/actions';
 import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
 import { IPartService } from 'vs/workbench/services/part/common/partService';
+import { IConstructorSignature0 } from 'vs/platform/instantiation/common/instantiation';
 
 export abstract class Panel extends Composite implements IPanel { }
 
@@ -19,12 +20,8 @@ export abstract class Panel extends Composite implements IPanel { }
  */
 export class PanelDescriptor extends CompositeDescriptor<Panel> {
 
-	constructor(moduleId: string, ctorName: string, id: string, name: string, cssClass?: string, order?: number, private _commandId?: string) {
-		super(moduleId, ctorName, id, name, cssClass, order);
-	}
-
-	public get commandId(): string {
-		return this._commandId;
+	constructor(ctor: IConstructorSignature0<Panel>, id: string, name: string, cssClass?: string, order?: number, _commandId?: string) {
+		super(ctor, id, name, cssClass, order, _commandId);
 	}
 }
 
@@ -34,35 +31,28 @@ export class PanelRegistry extends CompositeRegistry<Panel> {
 	/**
 	 * Registers a panel to the platform.
 	 */
-	public registerPanel(descriptor: PanelDescriptor): void {
+	registerPanel(descriptor: PanelDescriptor): void {
 		super.registerComposite(descriptor);
-	}
-
-	/**
-	 * Returns the panel descriptor for the given id or null if none.
-	 */
-	public getPanel(id: string): PanelDescriptor {
-		return this.getComposite(id) as PanelDescriptor;
 	}
 
 	/**
 	 * Returns an array of registered panels known to the platform.
 	 */
-	public getPanels(): PanelDescriptor[] {
+	getPanels(): PanelDescriptor[] {
 		return this.getComposites() as PanelDescriptor[];
 	}
 
 	/**
 	 * Sets the id of the panel that should open on startup by default.
 	 */
-	public setDefaultPanelId(id: string): void {
+	setDefaultPanelId(id: string): void {
 		this.defaultPanelId = id;
 	}
 
 	/**
 	 * Gets the id of the panel that should open on startup by default.
 	 */
-	public getDefaultPanelId(): string {
+	getDefaultPanelId(): string {
 		return this.defaultPanelId;
 	}
 }
@@ -86,7 +76,7 @@ export abstract class TogglePanelAction extends Action {
 		this.panelId = panelId;
 	}
 
-	public run(): TPromise<any> {
+	run(): TPromise<any> {
 
 		if (this.isPanelShowing()) {
 			return this.partService.setPanelHidden(true);
@@ -101,11 +91,11 @@ export abstract class TogglePanelAction extends Action {
 		return panel && panel.getId() === this.panelId;
 	}
 
-	protected isPanelFocussed(): boolean {
+	protected isPanelFocused(): boolean {
 		const activePanel = this.panelService.getActivePanel();
 		const activeElement = document.activeElement;
 
-		return activePanel && activeElement && DOM.isAncestor(activeElement, (<Panel>activePanel).getContainer().getHTMLElement());
+		return activePanel && activeElement && DOM.isAncestor(activeElement, (<Panel>activePanel).getContainer());
 	}
 }
 

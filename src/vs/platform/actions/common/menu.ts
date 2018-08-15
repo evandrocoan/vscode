@@ -5,14 +5,14 @@
 
 'use strict';
 
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { ContextKeyExpr, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
-import { MenuId, MenuRegistry, MenuItemAction, IMenu, IMenuItem, IMenuActionOptions } from 'vs/platform/actions/common/actions';
+import { MenuId, MenuRegistry, MenuItemAction, IMenu, IMenuItem, IMenuActionOptions, ISubmenuItem, SubmenuItemAction, isIMenuItem } from 'vs/platform/actions/common/actions';
 import { ICommandService } from 'vs/platform/commands/common/commands';
 
-type MenuItemGroup = [string, IMenuItem[]];
+type MenuItemGroup = [string, (IMenuItem | ISubmenuItem)[]];
 
 export class Menu implements IMenu {
 
@@ -21,10 +21,10 @@ export class Menu implements IMenu {
 	private _onDidChange = new Emitter<IMenu>();
 
 	constructor(
-		private id: MenuId,
+		id: MenuId,
 		startupSignal: TPromise<boolean>,
-		@ICommandService private _commandService: ICommandService,
-		@IContextKeyService private _contextKeyService: IContextKeyService
+		@ICommandService private readonly _commandService: ICommandService,
+		@IContextKeyService private readonly _contextKeyService: IContextKeyService
 	) {
 		startupSignal.then(_ => {
 			const menuItems = MenuRegistry.getMenuItems(id);
@@ -47,12 +47,9 @@ export class Menu implements IMenu {
 			}
 
 			// subscribe to context changes
-			this._disposables.push(this._contextKeyService.onDidChangeContext(keys => {
-				for (let k of keys) {
-					if (keysFilter.has(k)) {
-						this._onDidChange.fire();
-						return;
-					}
+			this._disposables.push(this._contextKeyService.onDidChangeContext(event => {
+				if (event.affectsSome(keysFilter)) {
+					this._onDidChange.fire();
 				}
 			}));
 
@@ -69,14 +66,14 @@ export class Menu implements IMenu {
 		return this._onDidChange.event;
 	}
 
-	getActions(options: IMenuActionOptions): [string, MenuItemAction[]][] {
-		const result: [string, MenuItemAction[]][] = [];
+	getActions(options: IMenuActionOptions): [string, (MenuItemAction | SubmenuItemAction)[]][] {
+		const result: [string, (MenuItemAction | SubmenuItemAction)[]][] = [];
 		for (let group of this._menuGroups) {
 			const [id, items] = group;
-			const activeActions: MenuItemAction[] = [];
+			const activeActions: (MenuItemAction | SubmenuItemAction)[] = [];
 			for (const item of items) {
 				if (this._contextKeyService.contextMatchesRules(item.when)) {
-					const action = new MenuItemAction(item.command, item.alt, options, this._commandService);
+					const action = isIMenuItem(item) ? new MenuItemAction(item.command, item.alt, options, this._contextKeyService, this._commandService) : new SubmenuItemAction(item);
 					action.order = item.order; //TODO@Ben order is menu item property, not an action property
 					activeActions.push(action);
 				}

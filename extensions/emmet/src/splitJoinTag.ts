@@ -4,38 +4,34 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import Node from '@emmetio/node';
-import { getNode, parse, validate } from './util';
+import { HtmlNode } from 'EmmetNode';
+import { getHtmlNode, parseDocument, validate, getEmmetMode, getEmmetConfiguration } from './util';
 
 export function splitJoinTag() {
-	let editor = vscode.window.activeTextEditor;
-	if (!validate(false)) {
+	if (!validate(false) || !vscode.window.activeTextEditor) {
 		return;
 	}
 
-	let rootNode = parse(editor.document);
+	const editor = vscode.window.activeTextEditor;
+	let rootNode = <HtmlNode>parseDocument(editor.document);
 	if (!rootNode) {
 		return;
 	}
 
-	editor.edit(editBuilder => {
+	return editor.edit(editBuilder => {
 		editor.selections.reverse().forEach(selection => {
-			let [rangeToReplace, textToReplaceWith] = getRangesToReplace(editor.document, selection, rootNode);
-			if (rangeToReplace && textToReplaceWith) {
-				editBuilder.replace(rangeToReplace, textToReplaceWith);
+			let nodeToUpdate = getHtmlNode(editor.document, rootNode, selection.start, true);
+			if (nodeToUpdate) {
+				let textEdit = getRangesToReplace(editor.document, nodeToUpdate);
+				editBuilder.replace(textEdit.range, textEdit.newText);
 			}
 		});
 	});
 }
 
-function getRangesToReplace(document: vscode.TextDocument, selection: vscode.Selection, rootNode: Node): [vscode.Range, string] {
-	let nodeToUpdate: Node = getNode(rootNode, selection.start);
+function getRangesToReplace(document: vscode.TextDocument, nodeToUpdate: HtmlNode): vscode.TextEdit {
 	let rangeToReplace: vscode.Range;
 	let textToReplaceWith: string;
-
-	if (!nodeToUpdate) {
-		return [null, null];
-	}
 
 	if (!nodeToUpdate.close) {
 		// Split Tag
@@ -52,7 +48,15 @@ function getRangesToReplace(document: vscode.TextDocument, selection: vscode.Sel
 		let end = <vscode.Position>nodeToUpdate.end;
 		rangeToReplace = new vscode.Range(start, end);
 		textToReplaceWith = '/>';
+
+		const emmetMode = getEmmetMode(document.languageId, []) || '';
+		const emmetConfig = getEmmetConfiguration(emmetMode);
+		if (emmetMode && emmetConfig.syntaxProfiles[emmetMode] &&
+			(emmetConfig.syntaxProfiles[emmetMode]['selfClosingStyle'] === 'xhtml' || emmetConfig.syntaxProfiles[emmetMode]['self_closing_tag'] === 'xhtml')) {
+			textToReplaceWith = ' ' + textToReplaceWith;
+		}
+
 	}
 
-	return [rangeToReplace, textToReplaceWith];
+	return new vscode.TextEdit(rangeToReplace, textToReplaceWith);
 }

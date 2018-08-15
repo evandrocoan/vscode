@@ -6,18 +6,20 @@
 
 import 'vs/css!./inputBox';
 
-import nls = require('vs/nls');
+import * as nls from 'vs/nls';
 import * as Bal from 'vs/base/browser/browser';
 import * as dom from 'vs/base/browser/dom';
 import { RenderOptions, renderFormattedText, renderText } from 'vs/base/browser/htmlContentRenderer';
-import aria = require('vs/base/browser/ui/aria/aria');
+import * as aria from 'vs/base/browser/ui/aria/aria';
 import { IAction } from 'vs/base/common/actions';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { IContextViewProvider, AnchorAlignment } from 'vs/base/browser/ui/contextview/contextview';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { Widget } from 'vs/base/browser/ui/widget';
 import { Color } from 'vs/base/common/color';
 import { mixin } from 'vs/base/common/objects';
+import { HistoryNavigator } from 'vs/base/common/history';
+import { IHistoryNavigationWidget } from 'vs/base/browser/history';
 
 const $ = dom.$;
 
@@ -54,7 +56,6 @@ export interface IMessage {
 
 export interface IInputValidationOptions {
 	validation: IInputValidator;
-	showMessage?: boolean;
 }
 
 export enum MessageType {
@@ -81,7 +82,7 @@ const defaultOpts = {
 
 export class InputBox extends Widget {
 	private contextViewProvider: IContextViewProvider;
-	private element: HTMLElement;
+	element: HTMLElement;
 	private input: HTMLInputElement;
 	private mirror: HTMLElement;
 	private actionbar: ActionBar;
@@ -90,7 +91,6 @@ export class InputBox extends Widget {
 	private placeholder: string;
 	private ariaLabel: string;
 	private validation: IInputValidator;
-	private showValidationMessage: boolean;
 	private state = 'idle';
 	private cachedHeight: number;
 
@@ -106,10 +106,10 @@ export class InputBox extends Widget {
 	private inputValidationErrorBackground: Color;
 
 	private _onDidChange = this._register(new Emitter<string>());
-	public onDidChange: Event<string> = this._onDidChange.event;
+	public readonly onDidChange: Event<string> = this._onDidChange.event;
 
 	private _onDidHeightChange = this._register(new Emitter<number>());
-	public onDidHeightChange: Event<number> = this._onDidHeightChange.event;
+	public readonly onDidHeightChange: Event<number> = this._onDidHeightChange.event;
 
 	constructor(container: HTMLElement, contextViewProvider: IContextViewProvider, options?: IInputOptions) {
 		super();
@@ -135,7 +135,6 @@ export class InputBox extends Widget {
 
 		if (this.options.validationOptions) {
 			this.validation = this.options.validationOptions.validation;
-			this.showValidationMessage = this.options.validationOptions.showMessage || false;
 		}
 
 		this.element = dom.append(container, $('.monaco-inputbox.idle'));
@@ -163,8 +162,7 @@ export class InputBox extends Widget {
 		}
 
 		if (this.placeholder) {
-			this.input.setAttribute('placeholder', this.placeholder);
-			this.input.title = this.placeholder;
+			this.setPlaceHolder(this.placeholder);
 		}
 
 		this.oninput(this.input, () => this.onValueChange());
@@ -179,7 +177,13 @@ export class InputBox extends Widget {
 			});
 		}
 
-		setTimeout(() => this.updateMirror(), 0);
+		setTimeout(() => {
+			if (!this.input) {
+				return;
+			}
+
+			this.updateMirror();
+		}, 0);
 
 		// Support actions
 		if (this.options.actions) {
@@ -201,6 +205,7 @@ export class InputBox extends Widget {
 	public setPlaceHolder(placeHolder: string): void {
 		if (this.input) {
 			this.input.setAttribute('placeholder', placeHolder);
+			this.input.title = placeHolder;
 		}
 	}
 
@@ -214,10 +219,6 @@ export class InputBox extends Widget {
 				this.input.removeAttribute('aria-label');
 			}
 		}
-	}
-
-	public setContextViewProvider(contextViewProvider: IContextViewProvider): void {
-		this.contextViewProvider = contextViewProvider;
 	}
 
 	public get inputElement(): HTMLInputElement {
@@ -330,21 +331,22 @@ export class InputBox extends Widget {
 	}
 
 	public validate(): boolean {
-		let result: IMessage = null;
+		let errorMsg: IMessage = null;
 
 		if (this.validation) {
-			result = this.validation(this.value);
+			errorMsg = this.validation(this.value);
 
-			if (!result) {
+			if (errorMsg) {
+				this.inputElement.setAttribute('aria-invalid', 'true');
+				this.showMessage(errorMsg);
+			}
+			else if (this.inputElement.hasAttribute('aria-invalid')) {
 				this.inputElement.removeAttribute('aria-invalid');
 				this.hideMessage();
-			} else {
-				this.inputElement.setAttribute('aria-invalid', 'true');
-				this.showMessage(result);
 			}
 		}
 
-		return !result;
+		return !errorMsg;
 	}
 
 	private stylesForType(type: MessageType): { border: Color; background: Color } {
@@ -385,9 +387,9 @@ export class InputBox extends Widget {
 					className: 'monaco-inputbox-message'
 				};
 
-				let spanElement: HTMLElement = (this.message.formatContent
+				const spanElement = (this.message.formatContent
 					? renderFormattedText(this.message.content, renderOptions)
-					: renderText(this.message.content, renderOptions)) as any;
+					: renderText(this.message.content, renderOptions));
 				dom.addClass(spanElement, this.classForType(this.message.type));
 
 				const styles = this.stylesForType(this.message.type);
@@ -491,10 +493,86 @@ export class InputBox extends Widget {
 		this.placeholder = null;
 		this.ariaLabel = null;
 		this.validation = null;
-		this.showValidationMessage = null;
 		this.state = null;
 		this.actionbar = null;
 
 		super.dispose();
+	}
+}
+
+export interface IHistoryInputOptions extends IInputOptions {
+	history: string[];
+}
+
+export class HistoryInputBox extends InputBox implements IHistoryNavigationWidget {
+
+	private readonly history: HistoryNavigator<string>;
+
+	constructor(container: HTMLElement, contextViewProvider: IContextViewProvider, options: IHistoryInputOptions) {
+		super(container, contextViewProvider, options);
+		this.history = new HistoryNavigator<string>(options.history, 100);
+	}
+
+	public addToHistory(): void {
+		if (this.value && this.value !== this.getCurrentValue()) {
+			this.history.add(this.value);
+		}
+	}
+
+	public getHistory(): string[] {
+		return this.history.getHistory();
+	}
+
+	public showNextValue(): void {
+		if (!this.history.has(this.value)) {
+			this.addToHistory();
+		}
+
+		let next = this.getNextValue();
+		if (next) {
+			next = next === this.value ? this.getNextValue() : next;
+		}
+
+		if (next) {
+			this.value = next;
+			aria.status(this.value);
+		}
+	}
+
+	public showPreviousValue(): void {
+		if (!this.history.has(this.value)) {
+			this.addToHistory();
+		}
+
+		let previous = this.getPreviousValue();
+		if (previous) {
+			previous = previous === this.value ? this.getPreviousValue() : previous;
+		}
+
+		if (previous) {
+			this.value = previous;
+			aria.status(this.value);
+		}
+	}
+
+	public clearHistory(): void {
+		this.history.clear();
+	}
+
+	private getCurrentValue(): string {
+		let currentValue = this.history.current();
+		if (!currentValue) {
+			currentValue = this.history.last();
+			this.history.next();
+		}
+		return currentValue;
+	}
+
+	private getPreviousValue(): string {
+		return this.history.previous() || this.history.first();
+	}
+
+	private getNextValue(): string {
+		return this.history.next() || this.history.last();
 	}
 }

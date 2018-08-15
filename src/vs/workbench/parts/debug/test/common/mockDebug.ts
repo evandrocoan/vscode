@@ -4,44 +4,50 @@
  *--------------------------------------------------------------------------------------------*/
 
 import uri from 'vs/base/common/uri';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { TPromise } from 'vs/base/common/winjs.base';
-import * as debug from 'vs/workbench/parts/debug/common/debug';
+import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+import { ILaunch, IDebugService, State, DebugEvent, ISession, IConfigurationManager, IStackFrame, IBreakpointData, IBreakpointUpdateData, IConfig, IModel, IViewModel, IRawSession, IBreakpoint, LoadedSourceEvent } from 'vs/workbench/parts/debug/common/debug';
 
-export class MockDebugService implements debug.IDebugService {
+export class MockDebugService implements IDebugService {
 	public _serviceBrand: any;
 
-	public get state(): debug.State {
+	public get state(): State {
 		return null;
 	}
 
-	public get onDidCustomEvent(): Event<DebugProtocol.Event> {
+	public get onDidCustomEvent(): Event<DebugEvent> {
 		return null;
 	}
 
-	public get onDidNewProcess(): Event<debug.IProcess> {
+	public get onDidNewSession(): Event<ISession> {
 		return null;
 	}
 
-	public get onDidEndProcess(): Event<debug.IProcess> {
+	public get onDidEndSession(): Event<ISession> {
 		return null;
 	}
 
-	public get onDidChangeState(): Event<debug.State> {
+	public get onDidChangeState(): Event<State> {
 		return null;
 	}
 
-	public getConfigurationManager(): debug.IConfigurationManager {
+	public get onDidLoadedSource(): Event<LoadedSourceEvent> {
 		return null;
 	}
 
-	public focusStackFrameAndEvaluate(focusedStackFrame: debug.IStackFrame): TPromise<void> {
+	public getConfigurationManager(): IConfigurationManager {
+		return null;
+	}
+
+	public focusStackFrame(focusedStackFrame: IStackFrame): void {
+	}
+
+	public addBreakpoints(uri: uri, rawBreakpoints: IBreakpointData[]): TPromise<IBreakpoint[]> {
 		return TPromise.as(null);
 	}
 
-	public addBreakpoints(uri: uri, rawBreakpoints: debug.IRawBreakpoint[]): TPromise<void> {
-		return TPromise.as(null);
-	}
+	public updateBreakpoints(uri: uri, data: { [id: string]: IBreakpointUpdateData }, sendOnResourceSaved: boolean): void { }
 
 	public enableOrDisableBreakpoints(enabled: boolean): TPromise<void> {
 		return TPromise.as(null);
@@ -83,31 +89,23 @@ export class MockDebugService implements debug.IDebugService {
 
 	public removeWatchExpressions(id?: string): void { }
 
-	public startDebugging(configName?: string, noDebug?: boolean): TPromise<any> {
+	public startDebugging(launch: ILaunch, configOrName?: IConfig | string, noDebug?: boolean): TPromise<any> {
 		return TPromise.as(null);
 	}
 
-	public createProcess(config: debug.IConfig): TPromise<any> {
+	public restartSession(): TPromise<any> {
 		return TPromise.as(null);
 	}
 
-	public findProcessByUUID(uuid: string): debug.IProcess | null {
+	public stopSession(): TPromise<any> {
+		return TPromise.as(null);
+	}
+
+	public getModel(): IModel {
 		return null;
 	}
 
-	public restartProcess(): TPromise<any> {
-		return TPromise.as(null);
-	}
-
-	public stopProcess(): TPromise<any> {
-		return TPromise.as(null);
-	}
-
-	public getModel(): debug.IModel {
-		return null;
-	}
-
-	public getViewModel(): debug.IViewModel {
+	public getViewModel(): IViewModel {
 		return null;
 	}
 
@@ -116,13 +114,16 @@ export class MockDebugService implements debug.IDebugService {
 	public sourceIsNotAvailable(uri: uri): void { }
 }
 
-export class MockSession implements debug.ISession {
+export class MockSession implements IRawSession {
+
 	public readyForBreakpoints = true;
 	public emittedStopped = true;
 
 	public getId() {
 		return 'mockrawsession';
 	}
+
+	public root: IWorkspaceFolder;
 
 	public getLengthInSeconds(): number {
 		return 100;
@@ -170,20 +171,26 @@ export class MockSession implements debug.ISession {
 		return {};
 	}
 
-	public get onDidEvent(): Event<DebugProtocol.Event> {
+	public get onDidEvent(): Event<DebugEvent> {
 		return null;
 	}
 
 	public get onDidInitialize(): Event<DebugProtocol.InitializedEvent> {
 		const emitter = new Emitter<DebugProtocol.InitializedEvent>();
-		return emitter.event;;
+		return emitter.event;
 	}
+
+	public get onDidExitAdapter(): Event<{ sessionId: string }> {
+		const emitter = new Emitter<{ sessionId: string }>();
+		return emitter.event;
+	}
+
 
 	public custom(request: string, args: any): TPromise<DebugProtocol.Response> {
 		return TPromise.as(null);
 	}
 
-	public disconnect(restart?: boolean, force?: boolean): TPromise<DebugProtocol.DisconnectResponse> {
+	public terminate(restart = false): TPromise<DebugProtocol.TerminateResponse> {
 		return TPromise.as(null);
 	}
 
@@ -215,6 +222,10 @@ export class MockSession implements debug.ISession {
 		return TPromise.as(null);
 	}
 
+	public terminateThreads(args: DebugProtocol.TerminateThreadsArguments): TPromise<DebugProtocol.TerminateThreadsResponse> {
+		return TPromise.as(null);
+	}
+
 	public setVariable(args: DebugProtocol.SetVariableArguments): TPromise<DebugProtocol.SetVariableResponse> {
 		return TPromise.as(null);
 	}
@@ -235,6 +246,10 @@ export class MockSession implements debug.ISession {
 		return TPromise.as(null);
 	}
 
+	public loadedSources(args: DebugProtocol.LoadedSourcesArguments): TPromise<DebugProtocol.LoadedSourcesResponse> {
+		return TPromise.as(null);
+	}
+
 	public setBreakpoints(args: DebugProtocol.SetBreakpointsArguments): TPromise<DebugProtocol.SetBreakpointsResponse> {
 		return TPromise.as(null);
 	}
@@ -247,5 +262,5 @@ export class MockSession implements debug.ISession {
 		return TPromise.as(null);
 	}
 
-	public onDidStop: Event<DebugProtocol.StoppedEvent> = null;
+	public readonly onDidStop: Event<DebugProtocol.StoppedEvent> = null;
 }

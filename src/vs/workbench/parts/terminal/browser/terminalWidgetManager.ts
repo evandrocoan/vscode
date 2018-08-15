@@ -3,10 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ITerminalConfigHelper } from 'vs/workbench/parts/terminal/common/terminal';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 
-export class TerminalWidgetManager {
+const WIDGET_HEIGHT = 29;
+
+export class TerminalWidgetManager implements IDisposable {
 	private _container: HTMLElement;
 	private _xtermViewport: HTMLElement;
 
@@ -14,7 +15,6 @@ export class TerminalWidgetManager {
 	private _messageListeners: IDisposable[] = [];
 
 	constructor(
-		private _configHelper: ITerminalConfigHelper,
 		terminalWrapper: HTMLElement
 	) {
 		this._container = document.createElement('div');
@@ -22,6 +22,14 @@ export class TerminalWidgetManager {
 		terminalWrapper.appendChild(this._container);
 
 		this._initTerminalHeightWatcher(terminalWrapper);
+	}
+
+	public dispose(): void {
+		if (this._container) {
+			this._container.parentElement.removeChild(this._container);
+			this._container = null;
+		}
+		this._xtermViewport = null;
 	}
 
 	private _initTerminalHeightWatcher(terminalWrapper: HTMLElement) {
@@ -79,7 +87,7 @@ class MessageWidget {
 		this._domNode = document.createElement('div');
 		this._domNode.style.position = 'absolute';
 		this._domNode.style.left = `${_left}px`;
-		this._domNode.style.bottom = `${_container.offsetHeight - _top}px`;
+		this._domNode.style.bottom = `${_container.offsetHeight - Math.max(_top, WIDGET_HEIGHT)}px`;
 		this._domNode.classList.add('terminal-message-widget', 'fadeIn');
 		this._domNode.textContent = _text;
 		this._container.appendChild(this._domNode);

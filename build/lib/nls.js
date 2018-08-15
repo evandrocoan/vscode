@@ -79,7 +79,7 @@ function isImportNode(node) {
     function fileFrom(file, contents, path) {
         if (path === void 0) { path = file.path; }
         return new File({
-            contents: new Buffer(contents),
+            contents: Buffer.from(contents),
             base: file.base,
             cwd: file.cwd,
             path: path
@@ -94,7 +94,7 @@ function isImportNode(node) {
         return { line: position.line - 1, character: position.column };
     }
     nls_1.lcFrom = lcFrom;
-    var SingleFileServiceHost = (function () {
+    var SingleFileServiceHost = /** @class */ (function () {
         function SingleFileServiceHost(options, filename, contents) {
             var _this = this;
             this.options = options;
@@ -150,18 +150,21 @@ function isImportNode(node) {
             .filter(function (d) { return d.importClause.namedBindings.kind === ts.SyntaxKind.NamespaceImport; })
             .map(function (d) { return d.importClause.namedBindings.name; })
             .concat(importEqualsDeclarations.map(function (d) { return d.name; }))
+            // find read-only references to `nls`
             .map(function (n) { return service.getReferencesAtPosition(filename, n.pos + 1); })
             .flatten()
             .filter(function (r) { return !r.isWriteAccess; })
+            // find the deepest call expressions AST nodes that contain those references
             .map(function (r) { return collect(sourceFile, function (n) { return isCallExpressionWithinTextSpanCollectStep(r.textSpan, n); }); })
             .map(function (a) { return lazy(a).last(); })
             .filter(function (n) { return !!n; })
             .map(function (n) { return n; })
+            // only `localize` calls
             .filter(function (n) { return n.expression.kind === ts.SyntaxKind.PropertyAccessExpression && n.expression.name.getText() === 'localize'; });
         // `localize` named imports
         var allLocalizeImportDeclarations = importDeclarations
             .filter(function (d) { return d.importClause.namedBindings.kind === ts.SyntaxKind.NamedImports; })
-            .map(function (d) { return d.importClause.namedBindings.elements; })
+            .map(function (d) { return [].concat(d.importClause.namedBindings.elements); })
             .flatten();
         // `localize` read-only references
         var localizeReferences = allLocalizeImportDeclarations
@@ -200,7 +203,7 @@ function isImportNode(node) {
         };
     }
     nls_1.analyze = analyze;
-    var TextModel = (function () {
+    var TextModel = /** @class */ (function () {
         function TextModel(contents) {
             var regex = /\r\n|\r|\n/g;
             var index = 0;

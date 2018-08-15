@@ -13,7 +13,6 @@ import { ILanguageExtensionPoint } from 'vs/editor/common/services/modeService';
 import { StaticServices } from 'vs/editor/standalone/browser/standaloneServices';
 import * as modes from 'vs/editor/common/modes';
 import { LanguageConfiguration, IndentAction } from 'vs/editor/common/modes/languageConfiguration';
-import * as editorCommon from 'vs/editor/common/editorCommon';
 import { Position } from 'vs/editor/common/core/position';
 import { Range } from 'vs/editor/common/core/range';
 import { CancellationToken } from 'vs/base/common/cancellation';
@@ -24,6 +23,8 @@ import { LanguageConfigurationRegistry } from 'vs/editor/common/modes/languageCo
 import { IMarkerData } from 'vs/platform/markers/common/markers';
 import { Token, TokenizationResult, TokenizationResult2 } from 'vs/editor/common/core/token';
 import { IStandaloneThemeService } from 'vs/editor/standalone/common/standaloneThemeService';
+import * as model from 'vs/editor/common/model';
+import { IMarkdownString } from 'vs/base/common/htmlContent';
 
 /**
  * Register information about a new language.
@@ -39,6 +40,11 @@ export function getLanguages(): ILanguageExtensionPoint[] {
 	let result: ILanguageExtensionPoint[] = [];
 	result = result.concat(ModesRegistry.getLanguages());
 	return result;
+}
+
+export function getEncodedLanguageId(languageId: string): number {
+	let lid = StaticServices.modeService.get().getLanguageIdentifier(languageId);
+	return lid && lid.id;
 }
 
 /**
@@ -66,6 +72,31 @@ export function setLanguageConfiguration(languageId: string, configuration: Lang
 		throw new Error(`Cannot set configuration for unknown language ${languageId}`);
 	}
 	return LanguageConfigurationRegistry.register(languageIdentifier, configuration);
+}
+
+/**
+ * @internal
+ */
+export class EncodedTokenizationSupport2Adapter implements modes.ITokenizationSupport {
+
+	private readonly _actual: EncodedTokensProvider;
+
+	constructor(actual: EncodedTokensProvider) {
+		this._actual = actual;
+	}
+
+	public getInitialState(): modes.IState {
+		return this._actual.getInitialState();
+	}
+
+	public tokenize(line: string, state: modes.IState, offsetDelta: number): TokenizationResult {
+		throw new Error('Not supported!');
+	}
+
+	public tokenize2(line: string, state: modes.IState): TokenizationResult2 {
+		let result = this._actual.tokenizeEncoded(line, state);
+		return new TokenizationResult2(result.tokens, result.endState);
+	}
 }
 
 /**
@@ -203,6 +234,38 @@ export interface ILineTokens {
 }
 
 /**
+ * The result of a line tokenization.
+ */
+export interface IEncodedLineTokens {
+	/**
+	 * The tokens on the line in a binary, encoded format. Each token occupies two array indices. For token i:
+	 *  - at offset 2*i => startIndex
+	 *  - at offset 2*i + 1 => metadata
+	 * Meta data is in binary format:
+	 * - -------------------------------------------
+	 *     3322 2222 2222 1111 1111 1100 0000 0000
+	 *     1098 7654 3210 9876 5432 1098 7654 3210
+	 * - -------------------------------------------
+	 *     bbbb bbbb bfff ffff ffFF FTTT LLLL LLLL
+	 * - -------------------------------------------
+	 *  - L = EncodedLanguageId (8 bits): Use `getEncodedLanguageId` to get the encoded ID of a language.
+	 *  - T = StandardTokenType (3 bits): Other = 0, Comment = 1, String = 2, RegEx = 4.
+	 *  - F = FontStyle (3 bits): None = 0, Italic = 1, Bold = 2, Underline = 4.
+	 *  - f = foreground ColorId (9 bits)
+	 *  - b = background ColorId (9 bits)
+	 *  - The color value for each colorId is defined in IStandaloneThemeData.customTokenColors:
+	 * e.g colorId = 1 is stored in IStandaloneThemeData.customTokenColors[1]. Color id = 0 means no color,
+	 * id = 1 is for the default foreground color, id = 2 for the default background.
+	 */
+	tokens: Uint32Array;
+	/**
+	 * The tokenization end state.
+	 * A pointer will be held to this and the object should not be modified by the tokenizer after the pointer is returned.
+	 */
+	endState: modes.IState;
+}
+
+/**
  * A "manual" provider of tokens.
  */
 export interface TokensProvider {
@@ -217,16 +280,39 @@ export interface TokensProvider {
 }
 
 /**
+ * A "manual" provider of tokens, returning tokens in a binary form.
+ */
+export interface EncodedTokensProvider {
+	/**
+	 * The initial state of a language. Will be the state passed in to tokenize the first line.
+	 */
+	getInitialState(): modes.IState;
+	/**
+	 * Tokenize a line given the state at the beginning of the line.
+	 */
+	tokenizeEncoded(line: string, state: modes.IState): IEncodedLineTokens;
+}
+
+function isEncodedTokensProvider(provider: TokensProvider | EncodedTokensProvider): provider is EncodedTokensProvider {
+	return provider['tokenizeEncoded'];
+}
+/**
  * Set the tokens provider for a language (manual implementation).
  */
-export function setTokensProvider(languageId: string, provider: TokensProvider): IDisposable {
+export function setTokensProvider(languageId: string, provider: TokensProvider | EncodedTokensProvider): IDisposable {
 	let languageIdentifier = StaticServices.modeService.get().getLanguageIdentifier(languageId);
 	if (!languageIdentifier) {
 		throw new Error(`Cannot set tokens provider for unknown language ${languageId}`);
 	}
-	let adapter = new TokenizationSupport2Adapter(StaticServices.standaloneThemeService.get(), languageIdentifier, provider);
+	let adapter: modes.ITokenizationSupport;
+	if (isEncodedTokensProvider(provider)) {
+		adapter = new EncodedTokenizationSupport2Adapter(provider);
+	} else {
+		adapter = new TokenizationSupport2Adapter(StaticServices.standaloneThemeService.get(), languageIdentifier, provider);
+	}
 	return modes.TokenizationRegistry.register(languageId, adapter);
 }
+
 
 /**
  * Set the tokens provider for a language (monarch implementation).
@@ -263,7 +349,7 @@ export function registerSignatureHelpProvider(languageId: string, provider: mode
  */
 export function registerHoverProvider(languageId: string, provider: modes.HoverProvider): IDisposable {
 	return modes.HoverProviderRegistry.register(languageId, {
-		provideHover: (model: editorCommon.IReadOnlyModel, position: Position, token: CancellationToken): Thenable<modes.Hover> => {
+		provideHover: (model: model.ITextModel, position: Position, token: CancellationToken): Thenable<modes.Hover> => {
 			let word = model.getWordAtPosition(position);
 
 			return toThenable<modes.Hover>(provider.provideHover(model, position, token)).then((value) => {
@@ -329,11 +415,11 @@ export function registerCodeLensProvider(languageId: string, provider: modes.Cod
  */
 export function registerCodeActionProvider(languageId: string, provider: CodeActionProvider): IDisposable {
 	return modes.CodeActionProviderRegistry.register(languageId, {
-		provideCodeActions: (model: editorCommon.IReadOnlyModel, range: Range, token: CancellationToken): modes.Command[] | Thenable<modes.Command[]> => {
+		provideCodeActions: (model: model.ITextModel, range: Range, context: modes.CodeActionContext, token: CancellationToken): (modes.Command | modes.CodeAction)[] | Thenable<(modes.Command | modes.CodeAction)[]> => {
 			let markers = StaticServices.markerService.get().read({ resource: model.uri }).filter(m => {
 				return Range.areIntersectingOrTouching(m, range);
 			});
-			return provider.provideCodeActions(model, range, { markers }, token);
+			return provider.provideCodeActions(model, range, { markers, only: context.only }, token);
 		}
 	});
 }
@@ -373,13 +459,27 @@ export function registerCompletionItemProvider(languageId: string, provider: Com
 	let adapter = new SuggestAdapter(provider);
 	return modes.SuggestRegistry.register(languageId, {
 		triggerCharacters: provider.triggerCharacters,
-		provideCompletionItems: (model: editorCommon.IReadOnlyModel, position: Position, token: CancellationToken): Thenable<modes.ISuggestResult> => {
-			return adapter.provideCompletionItems(model, position, token);
+		provideCompletionItems: (model: model.ITextModel, position: Position, context: modes.SuggestContext, token: CancellationToken): Thenable<modes.ISuggestResult> => {
+			return adapter.provideCompletionItems(model, position, context, token);
 		},
-		resolveCompletionItem: (model: editorCommon.IReadOnlyModel, position: Position, suggestion: modes.ISuggestion, token: CancellationToken): Thenable<modes.ISuggestion> => {
+		resolveCompletionItem: (model: model.ITextModel, position: Position, suggestion: modes.ISuggestion, token: CancellationToken): Thenable<modes.ISuggestion> => {
 			return adapter.resolveCompletionItem(model, position, suggestion, token);
 		}
 	});
+}
+
+/**
+ * Register a document color provider (used by Color Picker, Color Decorator).
+ */
+export function registerColorProvider(languageId: string, provider: modes.DocumentColorProvider): IDisposable {
+	return modes.ColorProviderRegistry.register(languageId, provider);
+}
+
+/**
+ * Register a folding range provider
+ */
+export function registerFoldingRangeProvider(languageId: string, provider: modes.FoldingRangeProvider): IDisposable {
+	return modes.FoldingRangeProviderRegistry.register(languageId, provider);
 }
 
 /**
@@ -394,6 +494,11 @@ export interface CodeActionContext {
 	 * @readonly
 	 */
 	readonly markers: IMarkerData[];
+
+	/**
+	 * Requested kind of actions to return.
+	 */
+	readonly only?: string;
 }
 
 /**
@@ -404,7 +509,7 @@ export interface CodeActionProvider {
 	/**
 	 * Provide commands for the given document and range.
 	 */
-	provideCodeActions(model: editorCommon.IReadOnlyModel, range: Range, context: CodeActionContext, token: CancellationToken): modes.Command[] | Thenable<modes.Command[]>;
+	provideCodeActions(model: model.ITextModel, range: Range, context: CodeActionContext, token: CancellationToken): (modes.Command | modes.CodeAction)[] | Thenable<(modes.Command | modes.CodeAction)[]>;
 }
 
 /**
@@ -474,7 +579,11 @@ export interface CompletionItem {
 	/**
 	 * A human-readable string that represents a doc-comment.
 	 */
-	documentation?: string;
+	documentation?: string | IMarkdownString;
+	/**
+	 * A command that should be run upon acceptance of this item.
+	 */
+	command?: modes.Command;
 	/**
 	 * A string that should be used when comparing this item
 	 * with other items. When `falsy` the [label](#CompletionItem.label)
@@ -504,6 +613,12 @@ export interface CompletionItem {
 	 */
 	range?: Range;
 	/**
+	 * An optional set of characters that when pressed while this completion is active will accept it first and
+	 * then type that character. *Note* that all commit characters should have `length=1` and that superfluous
+	 * characters will be ignored.
+	 */
+	commitCharacters?: string[];
+	/**
 	 * @deprecated **Deprecated** in favor of `CompletionItem.insertText` and `CompletionItem.range`.
 	 *
 	 * ~~An [edit](#TextEdit) which is applied to a document when selecting
@@ -513,7 +628,13 @@ export interface CompletionItem {
 	 * ~~The [range](#Range) of the edit must be single-line and on the same
 	 * line completions were [requested](#CompletionItemProvider.provideCompletionItems) at.~~
 	 */
-	textEdit?: editorCommon.ISingleEditOperation;
+	textEdit?: model.ISingleEditOperation;
+	/**
+	 * An optional array of additional text edits that are applied when
+	 * selecting this completion. Edits must not overlap with the main edit
+	 * nor with themselves.
+	 */
+	additionalTextEdits?: model.ISingleEditOperation[];
 }
 /**
  * Represents a collection of [completion items](#CompletionItem) to be presented
@@ -530,6 +651,25 @@ export interface CompletionList {
 	 */
 	items: CompletionItem[];
 }
+
+/**
+ * Contains additional information about the context in which
+ * [completion provider](#CompletionItemProvider.provideCompletionItems) is triggered.
+ */
+export interface CompletionContext {
+	/**
+	 * How the completion was triggered.
+	 */
+	triggerKind: modes.SuggestTriggerKind;
+
+	/**
+	 * Character that triggered the completion item provider.
+	 *
+	 * `undefined` if provider was not triggered by a character.
+	 */
+	triggerCharacter?: string;
+}
+
 /**
  * The completion item provider interface defines the contract between extensions and
  * the [IntelliSense](https://code.visualstudio.com/docs/editor/intellisense).
@@ -546,7 +686,8 @@ export interface CompletionItemProvider {
 	/**
 	 * Provide completion items for the given position and document.
 	 */
-	provideCompletionItems(model: editorCommon.IReadOnlyModel, position: Position, token: CancellationToken): CompletionItem[] | Thenable<CompletionItem[]> | CompletionList | Thenable<CompletionList>;
+	provideCompletionItems(document: model.ITextModel, position: Position, token: CancellationToken, context: CompletionContext): CompletionItem[] | Thenable<CompletionItem[]> | CompletionList | Thenable<CompletionList>;
+
 	/**
 	 * Given a completion item fill in more data, like [doc-comment](#CompletionItem.documentation)
 	 * or [details](#CompletionItem.detail).
@@ -583,6 +724,7 @@ function convertKind(kind: CompletionItemKind): modes.SuggestionType {
 	}
 	return 'property';
 }
+
 class SuggestAdapter {
 
 	private _provider: CompletionItemProvider;
@@ -599,9 +741,12 @@ class SuggestAdapter {
 			type: convertKind(item.kind),
 			detail: item.detail,
 			documentation: item.documentation,
+			command: item.command,
 			sortText: item.sortText,
 			filterText: item.filterText,
-			snippetType: 'internal'
+			snippetType: 'internal',
+			additionalTextEdits: item.additionalTextEdits,
+			commitCharacters: item.commitCharacters
 		};
 		let editRange = item.textEdit ? item.textEdit.range : item.range;
 		if (editRange) {
@@ -632,9 +777,9 @@ class SuggestAdapter {
 		return suggestion;
 	}
 
-	provideCompletionItems(model: editorCommon.IReadOnlyModel, position: Position, token: CancellationToken): Thenable<modes.ISuggestResult> {
-
-		return toThenable<CompletionItem[] | CompletionList>(this._provider.provideCompletionItems(model, position, token)).then(value => {
+	provideCompletionItems(model: model.ITextModel, position: Position, context: modes.SuggestContext, token: CancellationToken): Thenable<modes.ISuggestResult> {
+		const result = this._provider.provideCompletionItems(model, position, token, context);
+		return toThenable<CompletionItem[] | CompletionList>(result).then(value => {
 			const result: modes.ISuggestResult = {
 				suggestions: []
 			};
@@ -675,7 +820,7 @@ class SuggestAdapter {
 		});
 	}
 
-	resolveCompletionItem(model: editorCommon.IReadOnlyModel, position: Position, suggestion: modes.ISuggestion, token: CancellationToken): Thenable<modes.ISuggestion> {
+	resolveCompletionItem(model: model.ITextModel, position: Position, suggestion: modes.ISuggestion, token: CancellationToken): Thenable<modes.ISuggestion> {
 		if (typeof this._provider.resolveCompletionItem !== 'function') {
 			return TPromise.as(suggestion);
 		}
@@ -704,6 +849,7 @@ export function createMonacoLanguagesAPI(): typeof monaco.languages {
 		register: register,
 		getLanguages: getLanguages,
 		onLanguage: onLanguage,
+		getEncodedLanguageId: getEncodedLanguageId,
 
 		// provider methods
 		setLanguageConfiguration: setLanguageConfiguration,
@@ -725,11 +871,15 @@ export function createMonacoLanguagesAPI(): typeof monaco.languages {
 		registerDocumentRangeFormattingEditProvider: registerDocumentRangeFormattingEditProvider,
 		registerOnTypeFormattingEditProvider: registerOnTypeFormattingEditProvider,
 		registerLinkProvider: registerLinkProvider,
+		registerColorProvider: registerColorProvider,
+		registerFoldingRangeProvider: registerFoldingRangeProvider,
 
 		// enums
 		DocumentHighlightKind: modes.DocumentHighlightKind,
 		CompletionItemKind: CompletionItemKind,
 		SymbolKind: modes.SymbolKind,
 		IndentAction: IndentAction,
+		SuggestTriggerKind: modes.SuggestTriggerKind,
+		FoldingRangeKind: modes.FoldingRangeKind
 	};
 }

@@ -4,16 +4,28 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import { TPromise } from 'vs/base/common/winjs.base';
+import { ISplice } from 'vs/base/common/sequence';
+import { CancellationToken } from 'vs/base/common/cancellation';
+
 /**
  * Returns the last element of an array.
  * @param array The array.
  * @param n Which element from the end (default is zero).
  */
-export function tail<T>(array: T[], n: number = 0): T {
+export function tail<T>(array: ArrayLike<T>, n: number = 0): T {
 	return array[array.length - (1 + n)];
 }
 
-export function equals<T>(one: T[], other: T[], itemEquals: (a: T, b: T) => boolean = (a, b) => a === b): boolean {
+export function tail2<T>(arr: T[]): [T[], T] {
+	if (arr.length === 0) {
+		throw new Error('Invalid tail call');
+	}
+
+	return [arr.slice(0, arr.length - 1), arr[arr.length - 1]];
+}
+
+export function equals<T>(one: ReadonlyArray<T>, other: ReadonlyArray<T>, itemEquals: (a: T, b: T) => boolean = (a, b) => a === b): boolean {
 	if (one.length !== other.length) {
 		return false;
 	}
@@ -50,7 +62,7 @@ export function binarySearch<T>(array: T[], key: T, comparator: (op1: T, op2: T)
  * are located before all elements where p(x) is true.
  * @returns the least x for which p(x) is true or array.length if no element fullfills the given function.
  */
-export function findFirst<T>(array: T[], p: (x: T) => boolean): number {
+export function findFirstInSorted<T>(array: T[], p: (x: T) => boolean): number {
 	let low = 0, high = array.length;
 	if (high === 0) {
 		return 0; // no children
@@ -66,52 +78,60 @@ export function findFirst<T>(array: T[], p: (x: T) => boolean): number {
 	return low;
 }
 
+type Compare<T> = (a: T, b: T) => number;
+
 /**
  * Like `Array#sort` but always stable. Usually runs a little slower `than Array#sort`
  * so only use this when actually needing stable sort.
  */
-export function mergeSort<T>(data: T[], compare: (a: T, b: T) => number): T[] {
-	_divideAndMerge(data, compare);
+export function mergeSort<T>(data: T[], compare: Compare<T>): T[] {
+	_sort(data, compare, 0, data.length - 1, []);
 	return data;
 }
 
-function _divideAndMerge<T>(data: T[], compare: (a: T, b: T) => number): void {
-	if (data.length <= 1) {
-		// sorted
-		return;
+function _merge<T>(a: T[], compare: Compare<T>, lo: number, mid: number, hi: number, aux: T[]): void {
+	let leftIdx = lo, rightIdx = mid + 1;
+	for (let i = lo; i <= hi; i++) {
+		aux[i] = a[i];
 	}
-	const p = (data.length / 2) | 0;
-	const left = data.slice(0, p);
-	const right = data.slice(p);
-
-	_divideAndMerge(left, compare);
-	_divideAndMerge(right, compare);
-
-	let leftIdx = 0;
-	let rightIdx = 0;
-	let i = 0;
-	while (leftIdx < left.length && rightIdx < right.length) {
-		let ret = compare(left[leftIdx], right[rightIdx]);
-		if (ret <= 0) {
-			// smaller_equal -> take left to preserve order
-			data[i++] = left[leftIdx++];
+	for (let i = lo; i <= hi; i++) {
+		if (leftIdx > mid) {
+			// left side consumed
+			a[i] = aux[rightIdx++];
+		} else if (rightIdx > hi) {
+			// right side consumed
+			a[i] = aux[leftIdx++];
+		} else if (compare(aux[rightIdx], aux[leftIdx]) < 0) {
+			// right element is less -> comes first
+			a[i] = aux[rightIdx++];
 		} else {
-			// greater -> take right
-			data[i++] = right[rightIdx++];
+			// left element comes first (less or equal)
+			a[i] = aux[leftIdx++];
 		}
 	}
-	while (leftIdx < left.length) {
-		data[i++] = left[leftIdx++];
-	}
-	while (rightIdx < right.length) {
-		data[i++] = right[rightIdx++];
-	}
 }
+
+function _sort<T>(a: T[], compare: Compare<T>, lo: number, hi: number, aux: T[]) {
+	if (hi <= lo) {
+		return;
+	}
+	let mid = lo + ((hi - lo) / 2) | 0;
+	_sort(a, compare, lo, mid, aux);
+	_sort(a, compare, mid + 1, hi, aux);
+	if (compare(a[mid], a[mid + 1]) <= 0) {
+		// left and right are sorted and if the last-left element is less
+		// or equals than the first-right element there is nothing else
+		// to do
+		return;
+	}
+	_merge(a, compare, lo, mid, hi, aux);
+}
+
 
 export function groupBy<T>(data: T[], compare: (a: T, b: T) => number): T[][] {
 	const result: T[][] = [];
 	let currentGroup: T[];
-	for (const element of data.slice(0).sort(compare)) {
+	for (const element of mergeSort(data.slice(0), compare)) {
 		if (!currentGroup || compare(currentGroup[0], element) !== 0) {
 			currentGroup = [element];
 			result.push(currentGroup);
@@ -122,28 +142,41 @@ export function groupBy<T>(data: T[], compare: (a: T, b: T) => number): T[][] {
 	return result;
 }
 
-/**
- * Takes two *sorted* arrays and computes their delta (removed, added elements).
- * Finishes in `Math.min(before.length, after.length)` steps.
- * @param before
- * @param after
- * @param compare
- */
-export function delta<T>(before: T[], after: T[], compare: (a: T, b: T) => number) {
+interface IMutableSplice<T> extends ISplice<T> {
+	deleteCount: number;
+}
 
-	const removed: T[] = [];
-	const added: T[] = [];
+/**
+ * Diffs two *sorted* arrays and computes the splices which apply the diff.
+ */
+export function sortedDiff<T>(before: T[], after: T[], compare: (a: T, b: T) => number): ISplice<T>[] {
+	const result: IMutableSplice<T>[] = [];
+
+	function pushSplice(start: number, deleteCount: number, toInsert: T[]): void {
+		if (deleteCount === 0 && toInsert.length === 0) {
+			return;
+		}
+
+		const latest = result[result.length - 1];
+
+		if (latest && latest.start + latest.deleteCount === start) {
+			latest.deleteCount += deleteCount;
+			latest.toInsert.push(...toInsert);
+		} else {
+			result.push({ start, deleteCount, toInsert });
+		}
+	}
 
 	let beforeIdx = 0;
 	let afterIdx = 0;
 
 	while (true) {
 		if (beforeIdx === before.length) {
-			added.push(...after.slice(afterIdx));
+			pushSplice(beforeIdx, 0, after.slice(afterIdx));
 			break;
 		}
 		if (afterIdx === after.length) {
-			removed.push(...before.slice(beforeIdx));
+			pushSplice(beforeIdx, before.length - beforeIdx, []);
 			break;
 		}
 
@@ -156,13 +189,33 @@ export function delta<T>(before: T[], after: T[], compare: (a: T, b: T) => numbe
 			afterIdx += 1;
 		} else if (n < 0) {
 			// beforeElement is smaller -> before element removed
-			removed.push(beforeElement);
+			pushSplice(beforeIdx, 1, []);
 			beforeIdx += 1;
 		} else if (n > 0) {
 			// beforeElement is greater -> after element added
-			added.push(afterElement);
+			pushSplice(beforeIdx, 0, [afterElement]);
 			afterIdx += 1;
 		}
+	}
+
+	return result;
+}
+
+/**
+ * Takes two *sorted* arrays and computes their delta (removed, added elements).
+ * Finishes in `Math.min(before.length, after.length)` steps.
+ * @param before
+ * @param after
+ * @param compare
+ */
+export function delta<T>(before: T[], after: T[], compare: (a: T, b: T) => number): { removed: T[], added: T[] } {
+	const splices = sortedDiff(before, after, compare);
+	const removed: T[] = [];
+	const added: T[] = [];
+
+	for (const splice of splices) {
+		removed.push(...before.slice(splice.start, splice.start + splice.deleteCount));
+		added.push(...splice.toInsert);
 	}
 
 	return { removed, added };
@@ -183,26 +236,82 @@ export function top<T>(array: T[], compare: (a: T, b: T) => number, n: number): 
 		return [];
 	}
 	const result = array.slice(0, n).sort(compare);
-	for (let i = n, m = array.length; i < m; i++) {
+	topStep(array, compare, result, n, array.length);
+	return result;
+}
+
+/**
+ * Asynchronous variant of `top()` allowing for splitting up work in batches between which the event loop can run.
+ *
+ * Returns the top N elements from the array.
+ *
+ * Faster than sorting the entire array when the array is a lot larger than N.
+ *
+ * @param array The unsorted array.
+ * @param compare A sort function for the elements.
+ * @param n The number of elements to return.
+ * @param batch The number of elements to examine before yielding to the event loop.
+ * @return The first n elemnts from array when sorted with compare.
+ */
+export function topAsync<T>(array: T[], compare: (a: T, b: T) => number, n: number, batch: number, token?: CancellationToken): TPromise<T[]> {
+	if (n === 0) {
+		return TPromise.as([]);
+	}
+
+	return new TPromise((resolve, reject) => {
+		(async () => {
+			const o = array.length;
+			const result = array.slice(0, n).sort(compare);
+			for (let i = n, m = Math.min(n + batch, o); i < o; i = m, m = Math.min(m + batch, o)) {
+				if (i > n) {
+					await new Promise(resolve => setTimeout(resolve)); // nextTick() would starve I/O.
+				}
+				if (token && token.isCancellationRequested) {
+					throw new Error('canceled');
+				}
+				topStep(array, compare, result, i, m);
+			}
+			return result;
+		})()
+			.then(resolve, reject);
+	});
+}
+
+function topStep<T>(array: T[], compare: (a: T, b: T) => number, result: T[], i: number, m: number): void {
+	for (const n = result.length; i < m; i++) {
 		const element = array[i];
 		if (compare(element, result[n - 1]) < 0) {
 			result.pop();
-			const j = findFirst(result, e => compare(element, e) < 0);
+			const j = findFirstInSorted(result, e => compare(element, e) < 0);
 			result.splice(j, 0, element);
 		}
 	}
-	return result;
 }
 
 /**
  * @returns a new array with all undefined or null values removed. The original array is not modified at all.
  */
-export function coalesce<T>(array: T[]): T[] {
+export function coalesce<T>(array: T[]): T[];
+export function coalesce<T>(array: T[], inplace: true): void;
+export function coalesce<T>(array: T[], inplace?: true): void | T[] {
 	if (!array) {
-		return array;
+		if (!inplace) {
+			return array;
+		}
 	}
+	if (!inplace) {
+		return array.filter(e => !!e);
 
-	return array.filter(e => !!e);
+	} else {
+		let to = 0;
+		for (let i = 0; i < array.length; i++) {
+			if (!!array[i]) {
+				array[to] = array[i];
+				to += 1;
+			}
+		}
+		array.length = to;
+	}
 }
 
 /**
@@ -259,7 +368,7 @@ export function uniqueFilter<T>(keyFn: (t: T) => string): (t: T) => boolean {
 	};
 }
 
-export function firstIndex<T>(array: T[], fn: (item: T) => boolean): number {
+export function firstIndex<T>(array: T[] | ReadonlyArray<T>, fn: (item: T) => boolean): number {
 	for (let i = 0; i < array.length; i++) {
 		const element = array[i];
 
@@ -271,7 +380,7 @@ export function firstIndex<T>(array: T[], fn: (item: T) => boolean): number {
 	return -1;
 }
 
-export function first<T>(array: T[], fn: (item: T) => boolean, notFoundValue: T = null): T {
+export function first<T>(array: T[] | ReadonlyArray<T>, fn: (item: T) => boolean, notFoundValue: T = null): T {
 	const index = firstIndex(array, fn);
 	return index < 0 ? notFoundValue : array[index];
 }
@@ -287,14 +396,31 @@ export function commonPrefixLength<T>(one: T[], other: T[], equals: (a: T, b: T)
 }
 
 export function flatten<T>(arr: T[][]): T[] {
-	return arr.reduce((r, v) => r.concat(v), []);
+	return [].concat(...arr);
 }
 
-export function range(to: number, from = 0): number[] {
+export function range(to: number): number[];
+export function range(from: number, to: number): number[];
+export function range(arg: number, to?: number): number[] {
+	let from = typeof to === 'number' ? arg : 0;
+
+	if (typeof to === 'number') {
+		from = arg;
+	} else {
+		from = 0;
+		to = arg;
+	}
+
 	const result: number[] = [];
 
-	for (let i = from; i < to; i++) {
-		result.push(i);
+	if (from <= to) {
+		for (let i = from; i < to; i++) {
+			result.push(i);
+		}
+	} else {
+		for (let i = from; i > to; i--) {
+			result.push(i);
+		}
 	}
 
 	return result;
@@ -334,11 +460,57 @@ export function insert<T>(array: T[], element: T): () => void {
 }
 
 /**
- * Insert `insertArr` inside `taget` at `insertIndex`.
+ * Insert `insertArr` inside `target` at `insertIndex`.
  * Please don't touch unless you understand https://jsperf.com/inserting-an-array-within-an-array
  */
 export function arrayInsert<T>(target: T[], insertIndex: number, insertArr: T[]): T[] {
 	const before = target.slice(0, insertIndex);
 	const after = target.slice(insertIndex);
 	return before.concat(insertArr, after);
+}
+
+/**
+ * Uses Fisher-Yates shuffle to shuffle the given array
+ * @param array
+ */
+export function shuffle<T>(array: T[], seed?: number): void {
+	// Seeded random number generator in JS. Modified from:
+	// https://stackoverflow.com/questions/521295/seeding-the-random-number-generator-in-javascript
+	const random = () => {
+		var x = Math.sin(seed++) * 179426549; // throw away most significant digits and reduce any potential bias
+		return x - Math.floor(x);
+	};
+
+	const rand = typeof seed === 'number' ? random : Math.random;
+
+	for (let i = array.length - 1; i > 0; i -= 1) {
+		let j = Math.floor(rand() * (i + 1));
+		let temp = array[i];
+		array[i] = array[j];
+		array[j] = temp;
+	}
+}
+
+/**
+ * Pushes an element to the start of the array, if found.
+ */
+export function pushToStart<T>(arr: T[], value: T): void {
+	const index = arr.indexOf(value);
+
+	if (index > -1) {
+		arr.splice(index, 1);
+		arr.unshift(value);
+	}
+}
+
+/**
+ * Pushes an element to the end of the array, if found.
+ */
+export function pushToEnd<T>(arr: T[], value: T): void {
+	const index = arr.indexOf(value);
+
+	if (index > -1) {
+		arr.splice(index, 1);
+		arr.push(value);
+	}
 }

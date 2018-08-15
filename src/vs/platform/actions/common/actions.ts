@@ -12,18 +12,27 @@ import { IKeybindings } from 'vs/platform/keybinding/common/keybindingsRegistry'
 import { ContextKeyExpr, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { ICommandService } from 'vs/platform/commands/common/commands';
 import { IDisposable } from 'vs/base/common/lifecycle';
-import Event from 'vs/base/common/event';
+import { Event } from 'vs/base/common/event';
+import URI, { UriComponents } from 'vs/base/common/uri';
 
 export interface ILocalizedString {
 	value: string;
 	original: string;
 }
 
-export interface ICommandAction {
+export interface IBaseCommandAction {
 	id: string;
 	title: string | ILocalizedString;
 	category?: string | ILocalizedString;
-	iconClass?: string;
+}
+
+export interface ICommandAction extends IBaseCommandAction {
+	iconLocation?: { dark: URI; light?: URI; };
+	precondition?: ContextKeyExpr;
+}
+
+export interface ISerializableCommandAction extends IBaseCommandAction {
+	iconLocation?: { dark: UriComponents; light?: UriComponents; };
 }
 
 export interface IMenuItem {
@@ -34,32 +43,66 @@ export interface IMenuItem {
 	order?: number;
 }
 
+export interface ISubmenuItem {
+	title: string | ILocalizedString;
+	submenu: MenuId;
+	when?: ContextKeyExpr;
+	group?: 'navigation' | string;
+	order?: number;
+}
+
+export function isIMenuItem(item: IMenuItem | ISubmenuItem): item is IMenuItem {
+	return (item as IMenuItem).command !== undefined;
+}
+
+export function isISubmenuItem(item: IMenuItem | ISubmenuItem): item is ISubmenuItem {
+	return (item as ISubmenuItem).submenu !== undefined;
+}
+
 export class MenuId {
 
-	static readonly EditorTitle = new MenuId('1');
-	static readonly EditorTitleContext = new MenuId('2');
-	static readonly EditorContext = new MenuId('3');
-	static readonly ExplorerContext = new MenuId('4');
-	static readonly ProblemsPanelContext = new MenuId('5');
-	static readonly DebugVariablesContext = new MenuId('6');
-	static readonly DebugWatchContext = new MenuId('7');
-	static readonly DebugCallStackContext = new MenuId('8');
-	static readonly DebugBreakpointsContext = new MenuId('9');
-	static readonly DebugConsoleContext = new MenuId('10');
-	static readonly SCMTitle = new MenuId('11');
-	static readonly SCMResourceGroupContext = new MenuId('12');
-	static readonly SCMResourceContext = new MenuId('13');
-	static readonly CommandPalette = new MenuId('14');
-	static readonly ViewTitle = new MenuId('15');
-	static readonly ViewItemContext = new MenuId('16');
+	private static ID = 1;
 
-	constructor(private _id: string) {
+	static readonly EditorTitle = new MenuId();
+	static readonly EditorTitleContext = new MenuId();
+	static readonly EditorContext = new MenuId();
+	static readonly EmptyEditorGroupContext = new MenuId();
+	static readonly ExplorerContext = new MenuId();
+	static readonly OpenEditorsContext = new MenuId();
+	static readonly ProblemsPanelContext = new MenuId();
+	static readonly DebugVariablesContext = new MenuId();
+	static readonly DebugWatchContext = new MenuId();
+	static readonly DebugCallStackContext = new MenuId();
+	static readonly DebugBreakpointsContext = new MenuId();
+	static readonly DebugConsoleContext = new MenuId();
+	static readonly SCMTitle = new MenuId();
+	static readonly SCMSourceControl = new MenuId();
+	static readonly SCMResourceGroupContext = new MenuId();
+	static readonly SCMResourceContext = new MenuId();
+	static readonly SCMChangeContext = new MenuId();
+	static readonly CommandPalette = new MenuId();
+	static readonly ViewTitle = new MenuId();
+	static readonly ViewItemContext = new MenuId();
+	static readonly TouchBarContext = new MenuId();
+	static readonly SearchContext = new MenuId();
+	static readonly MenubarFileMenu = new MenuId();
+	static readonly MenubarEditMenu = new MenuId();
+	static readonly MenubarRecentMenu = new MenuId();
+	static readonly MenubarSelectionMenu = new MenuId();
+	static readonly MenubarViewMenu = new MenuId();
+	static readonly MenubarAppearanceMenu = new MenuId();
+	static readonly MenubarLayoutMenu = new MenuId();
+	static readonly MenubarGoMenu = new MenuId();
+	static readonly MenubarSwitchEditorMenu = new MenuId();
+	static readonly MenubarSwitchGroupMenu = new MenuId();
+	static readonly MenubarDebugMenu = new MenuId();
+	static readonly MenubarNewBreakpointMenu = new MenuId();
+	static readonly MenubarTasksMenu = new MenuId();
+	static readonly MenubarPreferencesMenu = new MenuId();
+	static readonly MenubarHelpMenu = new MenuId();
+	static readonly MenubarTerminalMenu = new MenuId();
 
-	}
-
-	get id(): string {
-		return this._id;
-	}
+	readonly id: string = String(MenuId.ID++);
 }
 
 export interface IMenuActionOptions {
@@ -69,7 +112,7 @@ export interface IMenuActionOptions {
 
 export interface IMenu extends IDisposable {
 	onDidChange: Event<IMenu>;
-	getActions(options?: IMenuActionOptions): [string, MenuItemAction[]][];
+	getActions(options?: IMenuActionOptions): [string, (MenuItemAction | SubmenuItemAction)[]][];
 }
 
 export const IMenuService = createDecorator<IMenuService>('menuService');
@@ -84,15 +127,15 @@ export interface IMenuService {
 export interface IMenuRegistry {
 	addCommand(userCommand: ICommandAction): boolean;
 	getCommand(id: string): ICommandAction;
-	appendMenuItem(menu: MenuId, item: IMenuItem): IDisposable;
-	getMenuItems(loc: MenuId): IMenuItem[];
+	appendMenuItem(menu: MenuId, item: IMenuItem | ISubmenuItem): IDisposable;
+	getMenuItems(loc: MenuId): (IMenuItem | ISubmenuItem)[];
 }
 
-export const MenuRegistry: IMenuRegistry = new class {
+export const MenuRegistry: IMenuRegistry = new class implements IMenuRegistry {
 
 	private _commands: { [id: string]: ICommandAction } = Object.create(null);
 
-	private _menuItems: { [loc: string]: IMenuItem[] } = Object.create(null);
+	private _menuItems: { [loc: string]: (IMenuItem | ISubmenuItem)[] } = Object.create(null);
 
 	addCommand(command: ICommandAction): boolean {
 		const old = this._commands[command.id];
@@ -104,7 +147,7 @@ export const MenuRegistry: IMenuRegistry = new class {
 		return this._commands[id];
 	}
 
-	appendMenuItem({ id }: MenuId, item: IMenuItem): IDisposable {
+	appendMenuItem({ id }: MenuId, item: IMenuItem | ISubmenuItem): IDisposable {
 		let array = this._menuItems[id];
 		if (!array) {
 			this._menuItems[id] = array = [item];
@@ -121,7 +164,7 @@ export const MenuRegistry: IMenuRegistry = new class {
 		};
 	}
 
-	getMenuItems({ id }: MenuId): IMenuItem[] {
+	getMenuItems({ id }: MenuId): (IMenuItem | ISubmenuItem)[] {
 		const result = this._menuItems[id] || [];
 
 		if (id === MenuId.CommandPalette.id) {
@@ -132,9 +175,12 @@ export const MenuRegistry: IMenuRegistry = new class {
 		return result;
 	}
 
-	private _appendImplicitItems(result: IMenuItem[]) {
+	private _appendImplicitItems(result: (IMenuItem | ISubmenuItem)[]) {
 		const set = new Set<string>();
-		for (const { command, alt } of result) {
+
+		const temp = result.filter(item => { return isIMenuItem(item); }) as IMenuItem[];
+
+		for (const { command, alt } of temp) {
 			set.add(command.id);
 			if (alt) {
 				set.add(alt.id);
@@ -153,13 +199,23 @@ export class ExecuteCommandAction extends Action {
 	constructor(
 		id: string,
 		label: string,
-		@ICommandService private _commandService: ICommandService) {
+		@ICommandService private readonly _commandService: ICommandService) {
 
 		super(id, label);
 	}
 
 	run(...args: any[]): TPromise<any> {
 		return this._commandService.executeCommand(this.id, ...args);
+	}
+}
+
+export class SubmenuItemAction extends Action {
+	// private _options: IMenuActionOptions;
+
+	readonly item: ISubmenuItem;
+	constructor(item: ISubmenuItem) {
+		typeof item.title === 'string' ? super('', item.title, 'submenu') : super('', item.title.value, 'submenu');
+		this.item = item;
 	}
 }
 
@@ -174,19 +230,20 @@ export class MenuItemAction extends ExecuteCommandAction {
 		item: ICommandAction,
 		alt: ICommandAction,
 		options: IMenuActionOptions,
+		@IContextKeyService contextKeyService: IContextKeyService,
 		@ICommandService commandService: ICommandService
 	) {
 		typeof item.title === 'string' ? super(item.id, item.title, commandService) : super(item.id, item.title.value, commandService);
-		this._cssClass = item.iconClass;
-		this._enabled = true;
+		this._cssClass = undefined;
+		this._enabled = !item.precondition || contextKeyService.contextMatchesRules(item.precondition);
 		this._options = options || {};
 
 		this.item = item;
-		this.alt = alt ? new MenuItemAction(alt, undefined, this._options, commandService) : undefined;
+		this.alt = alt ? new MenuItemAction(alt, undefined, this._options, contextKeyService, commandService) : undefined;
 	}
 
 	run(...args: any[]): TPromise<any> {
-		let runArgs = [];
+		let runArgs: any[] = [];
 
 		if (this._options.arg) {
 			runArgs = [...runArgs, this._options.arg];

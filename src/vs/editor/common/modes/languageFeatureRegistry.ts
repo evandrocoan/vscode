@@ -5,10 +5,11 @@
 
 'use strict';
 
-import Event, { Emitter } from 'vs/base/common/event';
-import { IDisposable } from 'vs/base/common/lifecycle';
-import { IReadOnlyModel } from 'vs/editor/common/editorCommon';
+import { Event, Emitter } from 'vs/base/common/event';
+import { IDisposable, toDisposable } from 'vs/base/common/lifecycle';
+import { ITextModel } from 'vs/editor/common/model';
 import { LanguageSelector, score } from 'vs/editor/common/modes/languageSelector';
+import { shouldSynchronizeModel } from 'vs/editor/common/services/modelService';
 
 interface Entry<T> {
 	selector: LanguageSelector;
@@ -17,11 +18,21 @@ interface Entry<T> {
 	_time: number;
 }
 
+function isExclusive(selector: LanguageSelector): boolean {
+	if (typeof selector === 'string') {
+		return false;
+	} else if (Array.isArray(selector)) {
+		return selector.every(isExclusive);
+	} else {
+		return selector.exclusive;
+	}
+}
+
 export default class LanguageFeatureRegistry<T> {
 
 	private _clock: number = 0;
 	private _entries: Entry<T>[] = [];
-	private _onDidChange: Emitter<number> = new Emitter<number>();
+	private readonly _onDidChange: Emitter<number> = new Emitter<number>();
 
 	constructor() {
 	}
@@ -43,27 +54,25 @@ export default class LanguageFeatureRegistry<T> {
 		this._lastCandidate = undefined;
 		this._onDidChange.fire(this._entries.length);
 
-		return {
-			dispose: () => {
-				if (entry) {
-					let idx = this._entries.indexOf(entry);
-					if (idx >= 0) {
-						this._entries.splice(idx, 1);
-						this._lastCandidate = undefined;
-						this._onDidChange.fire(this._entries.length);
-						entry = undefined;
-					}
+		return toDisposable(() => {
+			if (entry) {
+				let idx = this._entries.indexOf(entry);
+				if (idx >= 0) {
+					this._entries.splice(idx, 1);
+					this._lastCandidate = undefined;
+					this._onDidChange.fire(this._entries.length);
+					entry = undefined;
 				}
 			}
-		};
+		});
 	}
 
-	has(model: IReadOnlyModel): boolean {
+	has(model: ITextModel): boolean {
 		return this.all(model).length > 0;
 	}
 
-	all(model: IReadOnlyModel): T[] {
-		if (!model || model.isTooLargeForHavingARichMode()) {
+	all(model: ITextModel): T[] {
+		if (!model) {
 			return [];
 		}
 
@@ -80,13 +89,13 @@ export default class LanguageFeatureRegistry<T> {
 		return result;
 	}
 
-	ordered(model: IReadOnlyModel): T[] {
+	ordered(model: ITextModel): T[] {
 		const result: T[] = [];
 		this._orderedForEach(model, entry => result.push(entry.provider));
 		return result;
 	}
 
-	orderedGroups(model: IReadOnlyModel): T[][] {
+	orderedGroups(model: ITextModel): T[][] {
 		const result: T[][] = [];
 		let lastBucket: T[];
 		let lastBucketScore: number;
@@ -104,9 +113,9 @@ export default class LanguageFeatureRegistry<T> {
 		return result;
 	}
 
-	private _orderedForEach(model: IReadOnlyModel, callback: (provider: Entry<T>) => any): void {
+	private _orderedForEach(model: ITextModel, callback: (provider: Entry<T>) => any): void {
 
-		if (!model || model.isTooLargeForHavingARichMode()) {
+		if (!model) {
 			return;
 		}
 
@@ -122,7 +131,7 @@ export default class LanguageFeatureRegistry<T> {
 
 	private _lastCandidate: { uri: string; language: string; };
 
-	private _updateScores(model: IReadOnlyModel): void {
+	private _updateScores(model: ITextModel): void {
 
 		let candidate = {
 			uri: model.uri.toString(),
@@ -140,7 +149,17 @@ export default class LanguageFeatureRegistry<T> {
 		this._lastCandidate = candidate;
 
 		for (let entry of this._entries) {
-			entry._score = score(entry.selector, model.uri, model.getLanguageIdentifier().language);
+			entry._score = score(entry.selector, model.uri, model.getLanguageIdentifier().language, shouldSynchronizeModel(model));
+
+			if (isExclusive(entry.selector) && entry._score > 0) {
+				// support for one exclusive selector that overwrites
+				// any other selector
+				for (let entry of this._entries) {
+					entry._score = 0;
+				}
+				entry._score = 1000;
+				break;
+			}
 		}
 
 		// needs sorting

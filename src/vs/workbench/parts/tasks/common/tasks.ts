@@ -6,26 +6,86 @@
 
 import * as Types from 'vs/base/common/types';
 import { IJSONSchemaMap } from 'vs/base/common/jsonSchema';
+import * as Objects from 'vs/base/common/objects';
+import { UriComponents } from 'vs/base/common/uri';
 
-import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
-import { ProblemMatcher } from 'vs/platform/markers/common/problemMatcher';
+import { IExtensionDescription } from 'vs/workbench/services/extensions/common/extensions';
+import { ProblemMatcher } from 'vs/workbench/parts/tasks/common/problemMatcher';
+import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+import { RawContextKey } from 'vs/platform/contextkey/common/contextkey';
+
+export const TASK_RUNNING_STATE = new RawContextKey<boolean>('taskRunning', false);
+
+export enum ShellQuoting {
+	/**
+	 * Use character escaping.
+	 */
+	Escape = 1,
+
+	/**
+	 * Use strong quoting
+	 */
+	Strong = 2,
+
+	/**
+	 * Use weak quoting.
+	 */
+	Weak = 3,
+}
+
+export namespace ShellQuoting {
+	export function from(this: void, value: string): ShellQuoting {
+		if (!value) {
+			return ShellQuoting.Strong;
+		}
+		switch (value.toLowerCase()) {
+			case 'escape':
+				return ShellQuoting.Escape;
+			case 'strong':
+				return ShellQuoting.Strong;
+			case 'weak':
+				return ShellQuoting.Weak;
+			default:
+				return ShellQuoting.Strong;
+		}
+	}
+}
+
+export interface ShellQuotingOptions {
+	/**
+	 * The character used to do character escaping.
+	 */
+	escape?: string | {
+		escapeChar: string;
+		charsToEscape: string;
+	};
+
+	/**
+	 * The character used for string quoting.
+	 */
+	strong?: string;
+
+	/**
+	 * The character used for weak quoting.
+	 */
+	weak?: string;
+}
 
 export interface ShellConfiguration {
 	/**
 	 * The shell executable.
 	 */
-	executable: string;
+	executable?: string;
+
 	/**
 	 * The arguments to be passed to the shell executable.
 	 */
 	args?: string[];
-}
 
-export namespace ShellConfiguration {
-	export function is(value: any): value is ShellConfiguration {
-		let candidate: ShellConfiguration = value;
-		return candidate && Types.isString(candidate.executable) && (candidate.args === void 0 || Types.isStringArray(candidate.args));
-	}
+	/**
+	 * Which kind of quotes the shell supports.
+	 */
+	quoting?: ShellQuotingOptions;
 }
 
 export interface CommandOptions {
@@ -67,7 +127,7 @@ export enum RevealKind {
 }
 
 export namespace RevealKind {
-	export function fromString(value: string): RevealKind {
+	export function fromString(this: void, value: string): RevealKind {
 		switch (value.toLowerCase()) {
 			case 'always':
 				return RevealKind.Always;
@@ -139,6 +199,11 @@ export interface PresentationOptions {
 	 * every task execution (new). Defaults to `TaskInstanceKind.Shared`
 	 */
 	panel: PanelKind;
+
+	/**
+	 * Controls whether to show the "Terminal will be reused by tasks, press any key to close it" message.
+	 */
+	showReuseMessage: boolean;
 }
 
 export enum RuntimeType {
@@ -159,6 +224,23 @@ export namespace RuntimeType {
 	}
 }
 
+export interface QuotedString {
+	value: string;
+	quoting: ShellQuoting;
+}
+
+export type CommandString = string | QuotedString;
+
+export namespace CommandString {
+	export function value(value: CommandString): string {
+		if (Types.isString(value)) {
+			return value;
+		} else {
+			return value.value;
+		}
+	}
+}
+
 export interface CommandConfiguration {
 
 	/**
@@ -169,7 +251,7 @@ export interface CommandConfiguration {
 	/**
 	 * The command to execute
 	 */
-	name: string;
+	name: CommandString;
 
 	/**
 	 * Additional command options.
@@ -179,7 +261,7 @@ export interface CommandConfiguration {
 	/**
 	 * Command arguments.
 	 */
-	args?: string[];
+	args?: CommandString[];
 
 	/**
 	 * The task selector if needed.
@@ -214,25 +296,70 @@ export namespace TaskGroup {
 
 export type TaskGroup = 'clean' | 'build' | 'rebuild' | 'test';
 
-export enum TaskSourceKind {
-	Workspace = 1,
-	Extension = 2,
-	Generic = 3
+
+export enum TaskScope {
+	Global = 1,
+	Workspace = 2,
+	Folder = 3
 }
 
-export interface TaskSource {
-	kind: TaskSourceKind;
-	label: string;
-	detail?: string;
-	config?: {
-		index: number;
-		element: any;
-	};
+export namespace TaskSourceKind {
+	export const Workspace: 'workspace' = 'workspace';
+	export const Extension: 'extension' = 'extension';
+	export const InMemory: 'inMemory' = 'inMemory';
 }
+
+export interface TaskSourceConfigElement {
+	workspaceFolder: IWorkspaceFolder;
+	file: string;
+	index: number;
+	element: any;
+}
+
+export interface WorkspaceTaskSource {
+	readonly kind: 'workspace';
+	readonly label: string;
+	readonly config: TaskSourceConfigElement;
+	readonly customizes?: KeyedTaskIdentifier;
+}
+
+export interface ExtensionTaskSource {
+	readonly kind: 'extension';
+	readonly label: string;
+	readonly extension: string;
+	readonly scope: TaskScope;
+	readonly workspaceFolder: IWorkspaceFolder | undefined;
+}
+
+export interface ExtensionTaskSourceTransfer {
+	__workspaceFolder: UriComponents;
+	__definition: { type: string;[name: string]: any };
+}
+
+export interface InMemoryTaskSource {
+	readonly kind: 'inMemory';
+	readonly label: string;
+}
+
+export type TaskSource = WorkspaceTaskSource | ExtensionTaskSource | InMemoryTaskSource;
 
 export interface TaskIdentifier {
-	_key: string;
 	type: string;
+	[name: string]: any;
+}
+
+export interface KeyedTaskIdentifier extends TaskIdentifier {
+	_key: string;
+}
+
+export interface TaskDependency {
+	workspaceFolder: IWorkspaceFolder;
+	task: string | KeyedTaskIdentifier;
+}
+
+export enum GroupType {
+	default = 'default',
+	user = 'user'
 }
 
 export interface ConfigurationProperties {
@@ -253,14 +380,19 @@ export interface ConfigurationProperties {
 	group?: string;
 
 	/**
-	 * Whether this task is a primary task in the task group.
+	 * The group type
 	 */
-	isDefaultGroupEntry?: boolean;
+	groupType?: GroupType;
 
 	/**
 	 * The presentation options
 	 */
 	presentation?: PresentationOptions;
+
+	/**
+	 * The command options;
+	 */
+	options?: CommandOptions;
 
 	/**
 	 * Whether the task is a background task or not.
@@ -275,7 +407,7 @@ export interface ConfigurationProperties {
 	/**
 	 * The other tasks this task depends on.
 	 */
-	dependsOn?: string[];
+	dependsOn?: TaskDependency[];
 
 	/**
 	 * The problem watchers to use for this task
@@ -295,11 +427,6 @@ export interface CommonTask {
 	 */
 	_label: string;
 
-	/**
-	 * Indicated the source of the task (e.g tasks.json or extension)
-	 */
-	_source: TaskSource;
-
 	type: string;
 }
 
@@ -307,9 +434,16 @@ export interface CustomTask extends CommonTask, ConfigurationProperties {
 
 	type: 'custom';
 
+	/**
+	 * Indicated the source of the task (e.g tasks.json or extension)
+	 */
+	_source: WorkspaceTaskSource;
+
 	name: string;
 
 	identifier: string;
+
+	hasDefinedMatchers: boolean;
 
 	/**
 	 * The command configuration
@@ -322,11 +456,36 @@ export namespace CustomTask {
 		let candidate: CustomTask = value;
 		return candidate && candidate.type === 'custom';
 	}
+	export function getDefinition(task: CustomTask): KeyedTaskIdentifier {
+		let type: string;
+		if (task.command !== void 0) {
+			type = task.command.runtime === RuntimeType.Shell ? 'shell' : 'process';
+		} else {
+			type = '$composite';
+		}
+		let result: KeyedTaskIdentifier = {
+			type,
+			_key: task._id,
+			id: task._id
+		};
+		return result;
+	}
+	export function customizes(task: CustomTask): KeyedTaskIdentifier {
+		if (task._source && task._source.customizes) {
+			return task._source.customizes;
+		}
+		return undefined;
+	}
 }
 
 export interface ConfiguringTask extends CommonTask, ConfigurationProperties {
 
-	configures: TaskIdentifier;
+	/**
+	 * Indicated the source of the task (e.g tasks.json or extension)
+	 */
+	_source: WorkspaceTaskSource;
+
+	configures: KeyedTaskIdentifier;
 }
 
 export namespace ConfiguringTask {
@@ -338,7 +497,12 @@ export namespace ConfiguringTask {
 
 export interface ContributedTask extends CommonTask, ConfigurationProperties {
 
-	defines: TaskIdentifier;
+	/**
+	 * Indicated the source of the task (e.g tasks.json or extension)
+	 */
+	_source: ExtensionTaskSource;
+
+	defines: KeyedTaskIdentifier;
 
 	hasDefinedMatchers: boolean;
 
@@ -355,18 +519,151 @@ export namespace ContributedTask {
 	}
 }
 
-export type Task = CustomTask | ContributedTask;
+export interface InMemoryTask extends CommonTask, ConfigurationProperties {
+	/**
+	 * Indicated the source of the task (e.g tasks.json or extension)
+	 */
+	_source: InMemoryTaskSource;
 
-export namespace Task {
-	export function getKey(task: Task): string {
-		if (CustomTask.is(task)) {
-			return task.identifier;
-		} else {
-			return task.defines._key;
-		}
+	type: 'inMemory';
+
+	identifier: string;
+}
+
+export namespace InMemoryTask {
+	export function is(value: any): value is InMemoryTask {
+		let candidate = value as InMemoryTask;
+		return candidate && candidate._source && candidate._source.kind === TaskSourceKind.InMemory;
 	}
 }
 
+export type Task = CustomTask | ContributedTask | InMemoryTask;
+
+export namespace Task {
+	export function getRecentlyUsedKey(task: Task): string | undefined {
+		interface CustomKey {
+			type: string;
+			folder: string;
+			id: string;
+		}
+		interface ContributedKey {
+			type: string;
+			scope: number;
+			folder?: string;
+			id: string;
+		}
+		if (InMemoryTask.is(task)) {
+			return undefined;
+		}
+		if (CustomTask.is(task)) {
+			let workspaceFolder = task._source.config.workspaceFolder;
+			if (!workspaceFolder) {
+				return undefined;
+			}
+			let key: CustomKey = { type: 'custom', folder: workspaceFolder.uri.toString(), id: task.identifier };
+			return JSON.stringify(key);
+		}
+		if (ContributedTask.is(task)) {
+			let key: ContributedKey = { type: 'contributed', scope: task._source.scope, id: task._id };
+			if (task._source.scope === TaskScope.Folder && task._source.workspaceFolder) {
+				key.folder = task._source.workspaceFolder.uri.toString();
+			}
+			return JSON.stringify(key);
+		}
+		return undefined;
+	}
+
+	export function getMapKey(task: Task): string {
+		if (CustomTask.is(task)) {
+			let workspaceFolder = task._source.config.workspaceFolder;
+			return workspaceFolder ? `${workspaceFolder.uri.toString()}|${task._id}` : task._id;
+		} else if (ContributedTask.is(task)) {
+			let workspaceFolder = task._source.workspaceFolder;
+			return workspaceFolder
+				? `${task._source.scope.toString()}|${workspaceFolder.uri.toString()}|${task._id}`
+				: `${task._source.scope.toString()}|${task._id}`;
+		} else {
+			return task._id;
+		}
+	}
+
+	export function getWorkspaceFolder(task: Task): IWorkspaceFolder | undefined {
+		if (CustomTask.is(task)) {
+			return task._source.config.workspaceFolder;
+		} else if (ContributedTask.is(task)) {
+			return task._source.workspaceFolder;
+		} else {
+			return undefined;
+		}
+	}
+
+	export function clone(task: Task): Task {
+		return Objects.assign({}, task);
+	}
+
+	export function getTelemetryKind(task: Task): string {
+		if (ContributedTask.is(task)) {
+			return 'extension';
+		} else if (CustomTask.is(task)) {
+			if (task._source.customizes) {
+				return 'workspace>extension';
+			} else {
+				return 'workspace';
+			}
+		} else if (InMemoryTask.is(task)) {
+			return 'composite';
+		} else {
+			return 'unknown';
+		}
+	}
+
+	export function matches(task: Task, key: string | KeyedTaskIdentifier, compareId: boolean = false): boolean {
+		if (key === void 0) {
+			return false;
+		}
+		if (Types.isString(key)) {
+			return key === task._label || key === task.identifier || (compareId && key === task._id);
+		}
+		let identifier = Task.getTaskDefinition(task, true);
+		return identifier !== void 0 && identifier._key === key._key;
+	}
+
+	export function getQualifiedLabel(task: Task): string {
+		let workspaceFolder = getWorkspaceFolder(task);
+		if (workspaceFolder) {
+			return `${task._label} (${workspaceFolder.name})`;
+		} else {
+			return task._label;
+		}
+	}
+
+	export function getTaskDefinition(task: Task, useSource: boolean = false): KeyedTaskIdentifier {
+		if (ContributedTask.is(task)) {
+			return task.defines;
+		} else if (CustomTask.is(task)) {
+			if (useSource && task._source.customizes !== void 0) {
+				return task._source.customizes;
+			} else {
+				return CustomTask.getDefinition(task);
+			}
+		} else {
+			return undefined;
+		}
+	}
+
+	export function getTaskExecution(task: Task): TaskExecution {
+		let result: TaskExecution = {
+			id: task._id,
+			task: task
+		};
+		return result;
+	}
+}
+
+export interface TaskExecution {
+	id: string;
+	task: Task;
+}
 
 export enum ExecutionEngine {
 	Process = 1,
@@ -388,7 +685,98 @@ export interface TaskSet {
 }
 
 export interface TaskDefinition {
+	extensionId: string;
 	taskType: string;
 	required: string[];
 	properties: IJSONSchemaMap;
+}
+
+export class TaskSorter {
+
+	private _order: Map<string, number> = new Map();
+
+	constructor(workspaceFolders: IWorkspaceFolder[]) {
+		for (let i = 0; i < workspaceFolders.length; i++) {
+			this._order.set(workspaceFolders[i].uri.toString(), i);
+		}
+	}
+
+	public compare(a: Task, b: Task): number {
+		let aw = Task.getWorkspaceFolder(a);
+		let bw = Task.getWorkspaceFolder(b);
+		if (aw && bw) {
+			let ai = this._order.get(aw.uri.toString());
+			ai = ai === void 0 ? 0 : ai + 1;
+			let bi = this._order.get(bw.uri.toString());
+			bi = bi === void 0 ? 0 : bi + 1;
+			if (ai === bi) {
+				return a._label.localeCompare(b._label);
+			} else {
+				return ai - bi;
+			}
+		} else if (!aw && bw) {
+			return -1;
+		} else if (aw && !bw) {
+			return +1;
+		} else {
+			return 0;
+		}
+	}
+}
+
+export enum TaskEventKind {
+	Start = 'start',
+	ProcessStarted = 'processStarted',
+	Active = 'active',
+	Inactive = 'inactive',
+	Changed = 'changed',
+	Terminated = 'terminated',
+	ProcessEnded = 'processEnded',
+	End = 'end'
+}
+
+
+export enum TaskRunType {
+	SingleRun = 'singleRun',
+	Background = 'background'
+}
+
+export interface TaskEvent {
+	kind: TaskEventKind;
+	taskId?: string;
+	taskName?: string;
+	runType?: TaskRunType;
+	group?: string;
+	processId?: number;
+	exitCode?: number;
+	__task?: Task;
+}
+
+export namespace TaskEvent {
+	export function create(kind: TaskEventKind.ProcessStarted, task: Task, processId: number): TaskEvent;
+	export function create(kind: TaskEventKind.ProcessEnded, task: Task, exitCode: number): TaskEvent;
+	export function create(kind: TaskEventKind.Start | TaskEventKind.Active | TaskEventKind.Inactive | TaskEventKind.Terminated | TaskEventKind.End, task: Task): TaskEvent;
+	export function create(kind: TaskEventKind.Changed): TaskEvent;
+	export function create(kind: TaskEventKind, task?: Task, processIdOrExitCode?: number): TaskEvent {
+		if (task) {
+			let result = {
+				kind: kind,
+				taskId: task._id,
+				taskName: task.name,
+				runType: task.isBackground ? TaskRunType.Background : TaskRunType.SingleRun,
+				group: task.group,
+				processId: undefined,
+				exitCode: undefined,
+				__task: task,
+			};
+			if (kind === TaskEventKind.ProcessStarted) {
+				result.processId = processIdOrExitCode;
+			} else if (kind === TaskEventKind.ProcessEnded) {
+				result.exitCode = processIdOrExitCode;
+			}
+			return Object.freeze(result);
+		} else {
+			return Object.freeze({ kind: TaskEventKind.Changed });
+		}
+	}
 }

@@ -43,9 +43,19 @@ export interface IStatusbarEntry {
 	command?: string;
 
 	/**
+	 * Optional arguments for the command.
+	 */
+	arguments?: any[];
+
+	/**
 	 * An optional extension ID if this entry is provided from an extension.
 	 */
 	extensionId?: string;
+
+	/**
+	 * Wether to show a beak above the status bar entry.
+	 */
+	showBeak?: boolean;
 }
 
 export interface IStatusbarService {

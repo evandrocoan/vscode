@@ -6,12 +6,15 @@
 import * as glob from 'vs/base/common/glob';
 import * as paths from 'vs/base/common/paths';
 import * as path from 'path';
+import * as platform from 'vs/base/common/platform';
 import * as watcher from 'vs/workbench/services/files/node/watcher/common';
-import * as nsfw from 'nsfw';
-import { IWatcherService, IWatcherRequest } from 'vs/workbench/services/files/node/watcher/nsfw/watcher';
-import { TPromise, ProgressCallback, TValueCallback } from 'vs/base/common/winjs.base';
+import * as nsfw from 'vscode-nsfw';
+import { IWatcherService, IWatcherRequest, IWatcherOptions, IWatchError } from 'vs/workbench/services/files/node/watcher/nsfw/watcher';
+import { TPromise, TValueCallback } from 'vs/base/common/winjs.base';
 import { ThrottledDelayer } from 'vs/base/common/async';
 import { FileChangeType } from 'vs/platform/files/common/files';
+import { normalizeNFC } from 'vs/base/common/normalization';
+import { Event, Emitter } from 'vs/base/common/event';
 
 const nsfwActionToRawChangeType: { [key: number]: number } = [];
 nsfwActionToRawChangeType[nsfw.actions.CREATED] = FileChangeType.ADDED;
@@ -30,20 +33,18 @@ interface IPathWatcher {
 }
 
 export class NsfwWatcherService implements IWatcherService {
-	private static FS_EVENT_DELAY = 50; // aggregate and only emit events when changes have stopped for this duration (in ms)
+	private static readonly FS_EVENT_DELAY = 50; // aggregate and only emit events when changes have stopped for this duration (in ms)
 
 	private _pathWatchers: { [watchPath: string]: IPathWatcher } = {};
-	private _watcherPromise: TPromise<void>;
-	private _progressCallback: ProgressCallback;
 	private _verboseLogging: boolean;
+	private enospcErrorLogged: boolean;
 
+	private _onWatchEvent = new Emitter<watcher.IRawFileChange[] | IWatchError>();
+	readonly onWatchEvent = this._onWatchEvent.event;
 
-	public initialize(verboseLogging: boolean): TPromise<void> {
-		this._verboseLogging = verboseLogging;
-		this._watcherPromise = new TPromise<void>((c, e, p) => {
-			this._progressCallback = p;
-		});
-		return this._watcherPromise;
+	watch(options: IWatcherOptions): Event<watcher.IRawFileChange[] | IWatchError> {
+		this._verboseLogging = options.verboseLogging;
+		return this.onWatchEvent;
 	}
 
 	private _watch(request: IWatcherRequest): void {
@@ -55,6 +56,19 @@ export class NsfwWatcherService implements IWatcherService {
 			ready: new TPromise<IWatcherObjet>(c => readyPromiseCallback = c),
 			ignored: request.ignored
 		};
+
+		process.on('uncaughtException', (e: Error | string) => {
+
+			// Specially handle ENOSPC errors that can happen when
+			// the watcher consumes so many file descriptors that
+			// we are running into a limit. We only want to warn
+			// once in this case to avoid log spam.
+			// See https://github.com/Microsoft/vscode/issues/7950
+			if (e === 'Inotify limit reached' && !this.enospcErrorLogged) {
+				this.enospcErrorLogged = true;
+				this._onWatchEvent.fire({ message: 'Inotify limit reached (ENOSPC)' });
+			}
+		});
 
 		nsfw(request.basePath, events => {
 			for (let i = 0; i < events.length; i++) {
@@ -94,9 +108,14 @@ export class NsfwWatcherService implements IWatcherService {
 				const events = undeliveredFileEvents;
 				undeliveredFileEvents = [];
 
+				// Mac uses NFD unicode form on disk, but we want NFC
+				if (platform.isMacintosh) {
+					events.forEach(e => e.path = normalizeNFC(e.path));
+				}
+
 				// Broadcast to clients normalized
 				const res = watcher.normalize(events);
-				this._progressCallback(res);
+				this._onWatchEvent.fire(res);
 
 				// Logging
 				if (this._verboseLogging) {

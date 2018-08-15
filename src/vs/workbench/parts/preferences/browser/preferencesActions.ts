@@ -8,15 +8,21 @@ import { TPromise } from 'vs/base/common/winjs.base';
 import * as nls from 'vs/nls';
 import URI from 'vs/base/common/uri';
 import { Action } from 'vs/base/common/actions';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { IModeService } from 'vs/editor/common/services/modeService';
-import { IQuickOpenService, IPickOpenEntry, IFilePickOpenEntry } from 'vs/platform/quickOpen/common/quickOpen';
-import { IPreferencesService, getSettingsTargetName } from 'vs/workbench/parts/preferences/common/preferences';
-import { IWorkspaceContextService } from "vs/platform/workspace/common/workspace";
+import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
+import { IWorkspaceContextService, WorkbenchState, IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+import { ICommandService } from 'vs/platform/commands/common/commands';
+import { PICK_WORKSPACE_FOLDER_COMMAND_ID } from 'vs/workbench/browser/actions/workspaceCommands';
+import { IQuickInputService, IQuickPickItem } from 'vs/platform/quickinput/common/quickInput';
+import { getIconClasses } from 'vs/workbench/browser/labels';
+import { IModelService } from 'vs/editor/common/services/modelService';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
 
-export class OpenGlobalSettingsAction extends Action {
+export class OpenRawDefaultSettingsAction extends Action {
 
-	public static ID = 'workbench.action.openGlobalSettings';
-	public static LABEL = nls.localize('openGlobalSettings', "Open User Settings");
+	public static readonly ID = 'workbench.action.openRawDefaultSettings';
+	public static readonly LABEL = nls.localize('openRawDefaultSettings', "Open Raw Default Settings");
 
 	constructor(
 		id: string,
@@ -27,14 +33,93 @@ export class OpenGlobalSettingsAction extends Action {
 	}
 
 	public run(event?: any): TPromise<any> {
-		return this.preferencesService.openGlobalSettings();
+		return this.preferencesService.openRawDefaultSettings();
+	}
+}
+
+export class OpenSettings2Action extends Action {
+
+	public static readonly ID = 'workbench.action.openSettings2';
+	public static readonly LABEL = nls.localize('openSettings2', "Open Settings (UI)");
+
+	constructor(
+		id: string,
+		label: string,
+		@IPreferencesService private preferencesService2: IPreferencesService
+	) {
+		super(id, label);
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.preferencesService2.openSettings2();
+	}
+}
+
+
+export class OpenSettingsAction extends Action {
+
+	public static readonly ID = 'workbench.action.openSettings';
+	public static readonly LABEL = nls.localize('openSettings', "Open Settings");
+
+	constructor(
+		id: string,
+		label: string,
+		@IPreferencesService private preferencesService: IPreferencesService,
+		@IConfigurationService private configurationService: IConfigurationService,
+	) {
+		super(id, label);
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.configurationService.getValue('workbench.settings.editor') === 'json' ?
+			this.preferencesService.openSettings() :
+			this.preferencesService.openSettings2();
+	}
+}
+
+export class OpenSettingsJsonAction extends Action {
+
+	public static readonly ID = 'workbench.action.openSettingsJson';
+	public static readonly LABEL = nls.localize('openSettingsJson', "Open Settings (JSON)");
+
+	constructor(
+		id: string,
+		label: string,
+		@IPreferencesService private preferencesService: IPreferencesService
+	) {
+		super(id, label);
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.preferencesService.openSettings();
+	}
+}
+
+export class OpenGlobalSettingsAction extends Action {
+
+	public static readonly ID = 'workbench.action.openGlobalSettings';
+	public static readonly LABEL = nls.localize('openGlobalSettings', "Open User Settings");
+
+	constructor(
+		id: string,
+		label: string,
+		@IPreferencesService private preferencesService: IPreferencesService,
+		@IConfigurationService private configurationService: IConfigurationService
+	) {
+		super(id, label);
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.configurationService.getValue('workbench.settings.editor') === 'json' ?
+			this.preferencesService.openGlobalSettings() :
+			this.preferencesService.openSettings2();
 	}
 }
 
 export class OpenGlobalKeybindingsAction extends Action {
 
-	public static ID = 'workbench.action.openGlobalKeybindings';
-	public static LABEL = nls.localize('openGlobalKeybindings', "Open Keyboard Shortcuts");
+	public static readonly ID = 'workbench.action.openGlobalKeybindings';
+	public static readonly LABEL = nls.localize('openGlobalKeybindings', "Open Keyboard Shortcuts");
 
 	constructor(
 		id: string,
@@ -51,8 +136,8 @@ export class OpenGlobalKeybindingsAction extends Action {
 
 export class OpenGlobalKeybindingsFileAction extends Action {
 
-	public static ID = 'workbench.action.openGlobalKeybindingsFile';
-	public static LABEL = nls.localize('openGlobalKeybindingsFile', "Open Keyboard Shortcuts File");
+	public static readonly ID = 'workbench.action.openGlobalKeybindingsFile';
+	public static readonly LABEL = nls.localize('openGlobalKeybindingsFile', "Open Keyboard Shortcuts File");
 
 	constructor(
 		id: string,
@@ -67,71 +152,118 @@ export class OpenGlobalKeybindingsFileAction extends Action {
 	}
 }
 
-export class OpenWorkspaceSettingsAction extends Action {
+export class OpenDefaultKeybindingsFileAction extends Action {
 
-	public static ID = 'workbench.action.openWorkspaceSettings';
-	public static LABEL = nls.localize('openWorkspaceSettings', "Open Workspace Settings");
+	public static readonly ID = 'workbench.action.openDefaultKeybindingsFile';
+	public static readonly LABEL = nls.localize('openDefaultKeybindingsFile', "Open Default Keyboard Shortcuts File");
 
 	constructor(
 		id: string,
 		label: string,
-		@IPreferencesService private preferencesService: IPreferencesService,
-		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService
+		@IPreferencesService private preferencesService: IPreferencesService
 	) {
 		super(id, label);
-		this.enabled = this.workspaceContextService.hasWorkspace();
 	}
 
 	public run(event?: any): TPromise<any> {
-		return this.preferencesService.openWorkspaceSettings();
+		return this.preferencesService.openDefaultKeybindingsFile();
 	}
 }
 
-export class OpenFolderSettingsAction extends Action {
+export class OpenWorkspaceSettingsAction extends Action {
 
-	public static ID = 'workbench.action.openFolderSettings';
-	public static LABEL = nls.localize('openFolderSettings', "Open Folder Settings");
+	public static readonly ID = 'workbench.action.openWorkspaceSettings';
+	public static readonly LABEL = nls.localize('openWorkspaceSettings', "Open Workspace Settings");
+
+	private disposables: IDisposable[] = [];
 
 	constructor(
 		id: string,
 		label: string,
 		@IPreferencesService private preferencesService: IPreferencesService,
-		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService,
-		@IQuickOpenService private quickOpenService: IQuickOpenService
+		@IConfigurationService private configurationService: IConfigurationService,
+		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService
 	) {
 		super(id, label);
-		this.enabled = this.workspaceContextService.hasMultiFolderWorkspace();
+		this.update();
+		this.workspaceContextService.onDidChangeWorkbenchState(() => this.update(), this, this.disposables);
+	}
+
+	private update(): void {
+		this.enabled = this.workspaceContextService.getWorkbenchState() !== WorkbenchState.EMPTY;
+	}
+
+	public run(event?: any): TPromise<any> {
+		return this.configurationService.getValue('workbench.settings.editor') === 'json' ?
+			this.preferencesService.openWorkspaceSettings() :
+			this.preferencesService.openSettings2();
+	}
+
+	public dispose(): void {
+		this.disposables = dispose(this.disposables);
+		super.dispose();
+	}
+}
+
+export const OPEN_FOLDER_SETTINGS_COMMAND = '_workbench.action.openFolderSettings';
+export const OPEN_FOLDER_SETTINGS_LABEL = nls.localize('openFolderSettings', "Open Folder Settings");
+export class OpenFolderSettingsAction extends Action {
+
+	public static readonly ID = 'workbench.action.openFolderSettings';
+	public static readonly LABEL = OPEN_FOLDER_SETTINGS_LABEL;
+
+	private disposables: IDisposable[] = [];
+
+
+	constructor(
+		id: string,
+		label: string,
+		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService,
+		@IConfigurationService private configurationService: IConfigurationService,
+		@IPreferencesService private preferencesService: IPreferencesService,
+		@ICommandService private commandService: ICommandService
+	) {
+		super(id, label);
+		this.update();
+		this.workspaceContextService.onDidChangeWorkbenchState(() => this.update(), this, this.disposables);
+		this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.update(), this, this.disposables);
+	}
+
+	private update(): void {
+		this.enabled = this.workspaceContextService.getWorkbenchState() === WorkbenchState.WORKSPACE && this.workspaceContextService.getWorkspace().folders.length > 0;
 	}
 
 	public run(): TPromise<any> {
-		const picks: IPickOpenEntry[] = this.workspaceContextService.getWorkspace().roots.map((root, index) => {
-			return <IPickOpenEntry>{
-				label: getSettingsTargetName(root, this.workspaceContextService),
-				id: `${index}`
-			};
-		});
+		if (this.configurationService.getValue('workbench.settings.editor') === 'json') {
+			return this.commandService.executeCommand<IWorkspaceFolder>(PICK_WORKSPACE_FOLDER_COMMAND_ID)
+				.then(workspaceFolder => {
+					if (workspaceFolder) {
+						return this.commandService.executeCommand(OPEN_FOLDER_SETTINGS_COMMAND, workspaceFolder.uri);
+					}
+					return null;
+				});
+		} else {
+			return this.preferencesService.openSettings2();
+		}
+	}
 
-		return this.quickOpenService.pick(picks, { placeHolder: nls.localize('pickFolder', "Select Folder") })
-			.then(pick => {
-				if (pick) {
-					return this.preferencesService.openSettings(this.workspaceContextService.getWorkspace().roots[parseInt(pick.id)]);
-				}
-				return undefined;
-			});
-
+	public dispose(): void {
+		this.disposables = dispose(this.disposables);
+		super.dispose();
 	}
 }
 
 export class ConfigureLanguageBasedSettingsAction extends Action {
 
-	public static ID = 'workbench.action.configureLanguageBasedSettings';
-	public static LABEL = nls.localize('configureLanguageBasedSettings', "Configure Language Specific Settings...");
+	public static readonly ID = 'workbench.action.configureLanguageBasedSettings';
+	public static readonly LABEL = nls.localize('configureLanguageBasedSettings', "Configure Language Specific Settings...");
 
 	constructor(
 		id: string,
 		label: string,
+		@IModelService private modelService: IModelService,
 		@IModeService private modeService: IModeService,
-		@IQuickOpenService private quickOpenService: IQuickOpenService,
+		@IQuickInputService private quickInputService: IQuickInputService,
 		@IPreferencesService private preferencesService: IPreferencesService
 	) {
 		super(id, label);
@@ -139,7 +271,7 @@ export class ConfigureLanguageBasedSettingsAction extends Action {
 
 	public run(): TPromise<any> {
 		const languages = this.modeService.getRegisteredLanguageNames();
-		const picks: IPickOpenEntry[] = languages.sort().map((lang, index) => {
+		const picks: IQuickPickItem[] = languages.sort().map((lang, index) => {
 			let description: string = nls.localize('languageDescriptionConfigured', "({0})", this.modeService.getModeIdForLanguageName(lang.toLowerCase()));
 			// construct a fake resource to be able to show nice icons if any
 			let fakeResource: URI;
@@ -152,14 +284,14 @@ export class ConfigureLanguageBasedSettingsAction extends Action {
 					fakeResource = URI.file(filenames[0]);
 				}
 			}
-			return <IFilePickOpenEntry>{
+			return {
 				label: lang,
-				resource: fakeResource,
+				iconClasses: getIconClasses(this.modelService, this.modeService, fakeResource),
 				description
-			};
+			} as IQuickPickItem;
 		});
 
-		return this.quickOpenService.pick(picks, { placeHolder: nls.localize('pickLanguage', "Select Language") })
+		return this.quickInputService.pick(picks, { placeHolder: nls.localize('pickLanguage', "Select Language") })
 			.then(pick => {
 				if (pick) {
 					return this.modeService.getOrCreateModeByLanguageName(pick.label)

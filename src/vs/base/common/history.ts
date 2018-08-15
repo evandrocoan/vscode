@@ -17,31 +17,22 @@ export class HistoryNavigator<T> implements INavigator<T> {
 		this._onChange();
 	}
 
+	public getHistory(): T[] {
+		return this._elements;
+	}
+
 	public add(t: T) {
+		this._history.delete(t);
 		this._history.add(t);
 		this._onChange();
 	}
 
-	public addIfNotPresent(t: T) {
-		if (!this._history.has(t)) {
-			this.add(t);
-		}
-	}
-
 	public next(): T {
-		if (this._navigator.next()) {
-			return this._navigator.current();
-		}
-		this.last();
-		return null;
+		return this._navigator.next();
 	}
 
 	public previous(): T {
-		if (this._navigator.previous()) {
-			return this._navigator.current();
-		}
-		this.first();
-		return null;
+		return this._navigator.previous();
 	}
 
 	public current(): T {
@@ -60,10 +51,18 @@ export class HistoryNavigator<T> implements INavigator<T> {
 		return this._navigator.last();
 	}
 
+	public has(t: T): boolean {
+		return this._history.has(t);
+	}
+
+	public clear(): void {
+		this._initialize([]);
+		this._onChange();
+	}
+
 	private _onChange() {
 		this._reduceToLimit();
-		this._navigator = new ArrayNavigator(this._elements);
-		this._navigator.last();
+		this._navigator = new ArrayNavigator(this._elements, 0, this._elements.length, this._elements.length);
 	}
 
 	private _reduceToLimit() {

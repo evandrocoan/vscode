@@ -4,120 +4,152 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Event, { Emitter } from 'vs/base/common/event';
 import { TPromise } from 'vs/base/common/winjs.base';
-import { IThreadService } from 'vs/workbench/services/thread/common/threadService';
-import { ExtHostContext, MainThreadTreeViewsShape, ExtHostTreeViewsShape } from '../node/extHost.protocol';
-import { IMessageService, Severity } from 'vs/platform/message/common/message';
-import { ViewsRegistry } from 'vs/workbench/parts/views/browser/viewsRegistry';
-import { ITreeViewDataProvider, ITreeItem, TreeItemCollapsibleState } from 'vs/workbench/parts/views/common/views';
+import { Disposable } from 'vs/base/common/lifecycle';
+import { ExtHostContext, MainThreadTreeViewsShape, ExtHostTreeViewsShape, MainContext, IExtHostContext } from '../node/extHost.protocol';
+import { ITreeViewDataProvider, ITreeItem, IViewsService, ITreeViewer, ViewsRegistry, ICustomViewDescriptor } from 'vs/workbench/common/views';
+import { extHostNamedCustomer } from 'vs/workbench/api/electron-browser/extHostCustomers';
+import { distinct } from 'vs/base/common/arrays';
+import { INotificationService } from 'vs/platform/notification/common/notification';
 
-export class MainThreadTreeViews extends MainThreadTreeViewsShape {
+@extHostNamedCustomer(MainContext.MainThreadTreeViews)
+export class MainThreadTreeViews extends Disposable implements MainThreadTreeViewsShape {
 
 	private _proxy: ExtHostTreeViewsShape;
+	private _dataProviders: Map<string, TreeViewDataProvider> = new Map<string, TreeViewDataProvider>();
 
 	constructor(
-		@IThreadService threadService: IThreadService,
-		@IMessageService private messageService: IMessageService
+		extHostContext: IExtHostContext,
+		@IViewsService private viewsService: IViewsService,
+		@INotificationService private notificationService: INotificationService
 	) {
 		super();
-		this._proxy = threadService.get(ExtHostContext.ExtHostTreeViews);
+		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostTreeViews);
 	}
 
-	$registerView(treeViewId: string): void {
-		ViewsRegistry.registerTreeViewDataProvider(treeViewId, new TreeViewDataProvider(treeViewId, this._proxy, this.messageService));
-	}
-
-	$refresh(treeViewId: string, treeItemHandle?: number): void {
-		const treeViewDataProvider: TreeViewDataProvider = <TreeViewDataProvider>ViewsRegistry.getTreeViewDataProvider(treeViewId);
-		if (treeViewDataProvider) {
-			treeViewDataProvider.refresh(treeItemHandle);
+	$registerTreeViewDataProvider(treeViewId: string): void {
+		const dataProvider = new TreeViewDataProvider(treeViewId, this._proxy, this.notificationService);
+		this._dataProviders.set(treeViewId, dataProvider);
+		const viewer = this.getTreeViewer(treeViewId);
+		if (viewer) {
+			viewer.dataProvider = dataProvider;
+			this.registerListeners(treeViewId, viewer);
+			this._proxy.$setVisible(treeViewId, viewer.visible);
+		} else {
+			this.notificationService.error('No view is registered with id: ' + treeViewId);
 		}
+	}
+
+	$reveal(treeViewId: string, item: ITreeItem, parentChain: ITreeItem[], options: { select: boolean, focus: boolean }): TPromise<void> {
+		return this.viewsService.openView(treeViewId, options.focus)
+			.then(() => {
+				const viewer = this.getTreeViewer(treeViewId);
+				return viewer ? viewer.reveal(item, parentChain, options) : null;
+			});
+	}
+
+	$refresh(treeViewId: string, itemsToRefreshByHandle: { [treeItemHandle: string]: ITreeItem }): TPromise<void> {
+		const viewer = this.getTreeViewer(treeViewId);
+		const dataProvider = this._dataProviders.get(treeViewId);
+		if (viewer && dataProvider) {
+			const itemsToRefresh = dataProvider.getItemsToRefresh(itemsToRefreshByHandle);
+			return viewer.refresh(itemsToRefresh.length ? itemsToRefresh : void 0);
+		}
+		return TPromise.as(null);
+	}
+
+	private registerListeners(treeViewId: string, treeViewer: ITreeViewer): void {
+		this._register(treeViewer.onDidExpandItem(item => this._proxy.$setExpanded(treeViewId, item.handle, true)));
+		this._register(treeViewer.onDidCollapseItem(item => this._proxy.$setExpanded(treeViewId, item.handle, false)));
+		this._register(treeViewer.onDidChangeSelection(items => this._proxy.$setSelection(treeViewId, items.map(({ handle }) => handle))));
+		this._register(treeViewer.onDidChangeVisibility(isVisible => this._proxy.$setVisible(treeViewId, isVisible)));
+	}
+
+	private getTreeViewer(treeViewId: string): ITreeViewer {
+		const viewDescriptor: ICustomViewDescriptor = <ICustomViewDescriptor>ViewsRegistry.getView(treeViewId);
+		return viewDescriptor ? viewDescriptor.treeViewer : null;
+	}
+
+	dispose(): void {
+		this._dataProviders.forEach((dataProvider, treeViewId) => {
+			const treeViewer = this.getTreeViewer(treeViewId);
+			if (treeViewer) {
+				treeViewer.dataProvider = null;
+			}
+		});
+		this._dataProviders.clear();
+		super.dispose();
 	}
 }
 
-type TreeItemHandle = number;
+type TreeItemHandle = string;
 
 class TreeViewDataProvider implements ITreeViewDataProvider {
 
-	private _onDidChange: Emitter<ITreeItem | undefined | null> = new Emitter<ITreeItem | undefined | null>();
-	readonly onDidChange: Event<ITreeItem | undefined | null> = this._onDidChange.event;
-
-	private childrenMap: Map<TreeItemHandle, TreeItemHandle[]> = new Map<TreeItemHandle, TreeItemHandle[]>();
 	private itemsMap: Map<TreeItemHandle, ITreeItem> = new Map<TreeItemHandle, ITreeItem>();
 
 	constructor(private treeViewId: string,
 		private _proxy: ExtHostTreeViewsShape,
-		private messageService: IMessageService
+		private notificationService: INotificationService
 	) {
 	}
 
-	getElements(): TPromise<ITreeItem[]> {
-		return this._proxy.$getElements(this.treeViewId)
-			.then(elements => {
-				this.postGetElements(null, elements);
-				return elements;
-			}, err => this.messageService.show(Severity.Error, err));
-	}
-
-	getChildren(treeItem: ITreeItem): TPromise<ITreeItem[]> {
-		if (treeItem.children) {
+	getChildren(treeItem?: ITreeItem): TPromise<ITreeItem[]> {
+		if (treeItem && treeItem.children) {
 			return TPromise.as(treeItem.children);
 		}
-		return this._proxy.$getChildren(this.treeViewId, treeItem.handle)
+		return this._proxy.$getChildren(this.treeViewId, treeItem ? treeItem.handle : void 0)
 			.then(children => {
-				this.postGetElements(treeItem.handle, children);
-				return children;
-			}, err => this.messageService.show(Severity.Error, err));
+				return this.postGetChildren(children);
+			}, err => {
+				this.notificationService.error(err);
+				return [];
+			});
 	}
 
-	refresh(treeItemHandle?: number) {
-		if (treeItemHandle) {
-			let treeItem = this.itemsMap.get(treeItemHandle);
-			if (treeItem) {
-				this._onDidChange.fire(treeItem);
-			}
-		} else {
-			this._onDidChange.fire();
-		}
-	}
-
-	private clearChildren(treeItemHandle: TreeItemHandle): void {
-		const children = this.childrenMap.get(treeItemHandle);
-		if (children) {
-			for (const child of children) {
-				this.clearChildren(child);
-				this.itemsMap.delete(child);
-			}
-			this.childrenMap.delete(treeItemHandle);
-		}
-	}
-
-	private postGetElements(parent: TreeItemHandle, children: ITreeItem[]) {
-		this.setElements(parent, children);
-	}
-
-	private setElements(parent: TreeItemHandle, children: ITreeItem[]) {
-		if (children && children.length) {
-			for (const child of children) {
-				this.itemsMap.set(child.handle, child);
-				if (child.children && child.children.length) {
-					this.setElements(child.handle, child.children);
+	getItemsToRefresh(itemsToRefreshByHandle: { [treeItemHandle: string]: ITreeItem }): ITreeItem[] {
+		const itemsToRefresh: ITreeItem[] = [];
+		if (itemsToRefreshByHandle) {
+			for (const treeItemHandle of Object.keys(itemsToRefreshByHandle)) {
+				const currentTreeItem = this.itemsMap.get(treeItemHandle);
+				if (currentTreeItem) { // Refresh only if the item exists
+					const treeItem = itemsToRefreshByHandle[treeItemHandle];
+					// Update the current item with refreshed item
+					this.updateTreeItem(currentTreeItem, treeItem);
+					if (treeItemHandle === treeItem.handle) {
+						itemsToRefresh.push(currentTreeItem);
+					} else {
+						// Update maps when handle is changed and refresh parent
+						this.itemsMap.delete(treeItemHandle);
+						this.itemsMap.set(currentTreeItem.handle, currentTreeItem);
+						const parent = treeItem.parentHandle ? this.itemsMap.get(treeItem.parentHandle) : null;
+						if (parent) {
+							itemsToRefresh.push(parent);
+						}
+					}
 				}
 			}
-			if (parent) {
-				this.childrenMap.set(parent, children.map(child => child.handle));
-			}
 		}
+		return itemsToRefresh;
 	}
 
-	private populateElementsToExpand(elements: ITreeItem[], toExpand: ITreeItem[]) {
-		for (const element of elements) {
-			if (element.collapsibleState === TreeItemCollapsibleState.Expanded) {
-				toExpand.push(element);
-				if (element.children && element.children.length) {
-					this.populateElementsToExpand(element.children, toExpand);
-				}
+	private postGetChildren(elements: ITreeItem[]): ITreeItem[] {
+		const result = [];
+		if (elements) {
+			for (const element of elements) {
+				this.itemsMap.set(element.handle, element);
+				result.push(element);
+			}
+		}
+		return result;
+	}
+
+	private updateTreeItem(current: ITreeItem, treeItem: ITreeItem): void {
+		treeItem.children = treeItem.children ? treeItem.children : null;
+		if (current) {
+			const properties = distinct([...Object.keys(current), ...Object.keys(treeItem)]);
+			for (const property of properties) {
+				current[property] = treeItem[property];
 			}
 		}
 	}

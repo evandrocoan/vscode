@@ -4,43 +4,42 @@
  *--------------------------------------------------------------------------------------------*/
 
 'use strict';
-
-import nls = require('vs/nls');
-import { BasicEmmetEditorAction } from 'vs/workbench/parts/emmet/electron-browser/emmetActions';
-
-import { editorAction } from 'vs/editor/common/editorCommonExtensions';
-import { ICommonCodeEditor } from 'vs/editor/common/editorCommon';
+import * as nls from 'vs/nls';
+import { EmmetEditorAction } from 'vs/workbench/parts/emmet/electron-browser/emmetActions';
+import { registerEditorAction } from 'vs/editor/browser/editorExtensions';
 import { EditorContextKeys } from 'vs/editor/common/editorContextKeys';
-import { CoreEditingCommands } from 'vs/editor/common/controller/coreCommands';
-
 import { KeyCode } from 'vs/base/common/keyCodes';
 import { ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
+import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
+import { MenuId } from 'vs/platform/actions/common/actions';
 
-@editorAction
-class ExpandAbbreviationAction extends BasicEmmetEditorAction {
+class ExpandAbbreviationAction extends EmmetEditorAction {
 
 	constructor() {
-		super(
-			'editor.emmet.action.expandAbbreviation',
-			nls.localize('expandAbbreviationAction', "Emmet: Expand Abbreviation"),
-			'Emmet: Expand Abbreviation',
-			'expand_abbreviation',
-			{
+		super({
+			id: 'editor.emmet.action.expandAbbreviation',
+			label: nls.localize('expandAbbreviationAction', "Emmet: Expand Abbreviation"),
+			alias: 'Emmet: Expand Abbreviation',
+			precondition: EditorContextKeys.writable,
+			actionName: 'expand_abbreviation',
+			kbOpts: {
 				primary: KeyCode.Tab,
 				kbExpr: ContextKeyExpr.and(
-					EditorContextKeys.textFocus,
-					EditorContextKeys.hasOnlyEmptySelection,
-					EditorContextKeys.hasSingleSelection,
+					EditorContextKeys.editorTextFocus,
 					EditorContextKeys.tabDoesNotMoveFocus,
-					ContextKeyExpr.has('config.emmet.triggerExpansionOnTab'),
-					ContextKeyExpr.not('config.emmet.useNewEmmet')
-				)
+					ContextKeyExpr.has('config.emmet.triggerExpansionOnTab')
+				),
+				weight: KeybindingWeight.EditorContrib
+			},
+			menubarOpts: {
+				menuId: MenuId.MenubarEditMenu,
+				group: '5_insert',
+				title: nls.localize({ key: 'miEmmetExpandAbbreviation', comment: ['&& denotes a mnemonic'] }, "Emmet: E&&xpand Abbreviation"),
+				order: 3
 			}
-		);
-	}
+		});
 
-	protected noExpansionOccurred(editor: ICommonCodeEditor): void {
-		// forward the tab key back to the editor
-		CoreEditingCommands.Tab.runEditorCommand(null, editor, null);
 	}
 }
+
+registerEditorAction(ExpandAbbreviationAction);

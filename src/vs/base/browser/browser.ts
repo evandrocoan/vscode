@@ -5,19 +5,19 @@
 'use strict';
 
 import * as Platform from 'vs/base/common/platform';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { IDisposable } from 'vs/base/common/lifecycle';
 
 class WindowManager {
 
-	public static INSTANCE = new WindowManager();
+	public static readonly INSTANCE = new WindowManager();
 
 	// --- Zoom Level
 	private _zoomLevel: number = 0;
 	private _lastZoomLevelChangeTime: number = 0;
-	private _onDidChangeZoomLevel: Emitter<number> = new Emitter<number>();
+	private readonly _onDidChangeZoomLevel: Emitter<number> = new Emitter<number>();
 
-	public onDidChangeZoomLevel: Event<number> = this._onDidChangeZoomLevel.event;
+	public readonly onDidChangeZoomLevel: Event<number> = this._onDidChangeZoomLevel.event;
 	public getZoomLevel(): number {
 		return this._zoomLevel;
 	}
@@ -61,9 +61,9 @@ class WindowManager {
 
 	// --- Fullscreen
 	private _fullscreen: boolean;
-	private _onDidChangeFullscreen: Emitter<void> = new Emitter<void>();
+	private readonly _onDidChangeFullscreen: Emitter<void> = new Emitter<void>();
 
-	public onDidChangeFullscreen: Event<void> = this._onDidChangeFullscreen.event;
+	public readonly onDidChangeFullscreen: Event<void> = this._onDidChangeFullscreen.event;
 	public setFullscreen(fullscreen: boolean): void {
 		if (this._fullscreen === fullscreen) {
 			return;
@@ -78,9 +78,9 @@ class WindowManager {
 
 	// --- Accessibility
 	private _accessibilitySupport = Platform.AccessibilitySupport.Unknown;
-	private _onDidChangeAccessibilitySupport: Emitter<void> = new Emitter<void>();
+	private readonly _onDidChangeAccessibilitySupport: Emitter<void> = new Emitter<void>();
 
-	public onDidChangeAccessibilitySupport: Event<void> = this._onDidChangeAccessibilitySupport.event;
+	public readonly onDidChangeAccessibilitySupport: Event<void> = this._onDidChangeAccessibilitySupport.event;
 	public setAccessibilitySupport(accessibilitySupport: Platform.AccessibilitySupport): void {
 		if (this._accessibilitySupport === accessibilitySupport) {
 			return;
@@ -155,29 +155,18 @@ export const isWebKit = (userAgent.indexOf('AppleWebKit') >= 0);
 export const isChrome = (userAgent.indexOf('Chrome') >= 0);
 export const isSafari = (userAgent.indexOf('Chrome') === -1) && (userAgent.indexOf('Safari') >= 0);
 export const isIPad = (userAgent.indexOf('iPad') >= 0);
+export const isEdgeWebView = isEdge && (userAgent.indexOf('WebView/') >= 0);
 
-export const isChromev56 = (
-	userAgent.indexOf('Chrome/56.') >= 0
-	// Edge likes to impersonate Chrome sometimes
-	&& userAgent.indexOf('Edge/') === -1
-);
-
-export const supportsTranslate3d = !isFirefox;
-
-export function canUseTranslate3d(): boolean {
-	if (!supportsTranslate3d) {
+export function hasClipboardSupport() {
+	if (isIE) {
 		return false;
 	}
 
-	if (getZoomLevel() !== 0) {
-		return false;
-	}
+	if (isEdge) {
+		let index = userAgent.indexOf('Edge/');
+		let version = parseInt(userAgent.substring(index + 5, userAgent.indexOf('.', index)), 10);
 
-	// see https://github.com/Microsoft/vscode/issues/24483
-	if (isChromev56) {
-		const pixelRatio = getPixelRatio();
-		if (Math.floor(pixelRatio) !== pixelRatio) {
-			// Not an integer
+		if (!version || (version >= 12 && version <= 16)) {
 			return false;
 		}
 	}

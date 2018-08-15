@@ -13,26 +13,28 @@ import * as strings from 'vs/base/common/strings';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IContext, IHighlight, QuickOpenEntryGroup, QuickOpenModel } from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import { IAutoFocus, Mode } from 'vs/base/parts/quickopen/common/quickOpen';
-import { ICommonCodeEditor } from 'vs/editor/common/editorCommon';
+import { ScrollType } from 'vs/editor/common/editorCommon';
 import { EditorContextKeys } from 'vs/editor/common/editorContextKeys';
-import { SymbolInformation, DocumentSymbolProviderRegistry, symbolKindToCssClass, IOutline } from 'vs/editor/common/modes';
+import { DocumentSymbol, DocumentSymbolProviderRegistry, symbolKindToCssClass } from 'vs/editor/common/modes';
 import { BaseEditorQuickOpenAction, IDecorator } from './editorQuickOpen';
-import { getDocumentSymbols } from 'vs/editor/contrib/quickOpen/common/quickOpen';
-import { editorAction, ServicesAccessor } from 'vs/editor/common/editorCommonExtensions';
+import { getDocumentSymbols } from 'vs/editor/contrib/quickOpen/quickOpen';
+import { registerEditorAction, ServicesAccessor } from 'vs/editor/browser/editorExtensions';
 import { KeyCode, KeyMod } from 'vs/base/common/keyCodes';
-import { Range } from 'vs/editor/common/core/range';
+import { Range, IRange } from 'vs/editor/common/core/range';
+import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
+import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
 
 let SCOPE_PREFIX = ':';
 
-class SymbolEntry extends QuickOpenEntryGroup {
+export class SymbolEntry extends QuickOpenEntryGroup {
 	private name: string;
 	private type: string;
 	private description: string;
 	private range: Range;
-	private editor: ICommonCodeEditor;
+	private editor: ICodeEditor;
 	private decorator: IDecorator;
 
-	constructor(name: string, type: string, description: string, range: Range, highlights: IHighlight[], editor: ICommonCodeEditor, decorator: IDecorator) {
+	constructor(name: string, type: string, description: string, range: Range, highlights: IHighlight[], editor: ICodeEditor, decorator: IDecorator) {
 		super();
 
 		this.name = name;
@@ -81,7 +83,7 @@ class SymbolEntry extends QuickOpenEntryGroup {
 		// Apply selection and focus
 		let range = this.toSelection();
 		this.editor.setSelection(range);
-		this.editor.revealRangeInCenter(range);
+		this.editor.revealRangeInCenter(range, ScrollType.Smooth);
 		this.editor.focus();
 
 		return true;
@@ -91,7 +93,7 @@ class SymbolEntry extends QuickOpenEntryGroup {
 
 		// Select Outline Position
 		let range = this.toSelection();
-		this.editor.revealRangeInCenter(range);
+		this.editor.revealRangeInCenter(range, ScrollType.Smooth);
 
 		// Decorate if possible
 		this.decorator.decorateLine(this.range, this.editor);
@@ -109,7 +111,6 @@ class SymbolEntry extends QuickOpenEntryGroup {
 	}
 }
 
-@editorAction
 export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 
 	constructor() {
@@ -120,7 +121,8 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 			precondition: EditorContextKeys.hasDocumentSymbolProvider,
 			kbOpts: {
 				kbExpr: EditorContextKeys.focus,
-				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_O
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_O,
+				weight: KeybindingWeight.EditorContrib
 			},
 			menuOpts: {
 				group: 'navigation',
@@ -129,7 +131,7 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 		});
 	}
 
-	public run(accessor: ServicesAccessor, editor: ICommonCodeEditor): TPromise<void> {
+	public run(accessor: ServicesAccessor, editor: ICodeEditor): TPromise<void> {
 
 		let model = editor.getModel();
 
@@ -138,16 +140,16 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 		}
 
 		// Resolve outline
-		return getDocumentSymbols(model).then((result: IOutline) => {
-			if (result.entries.length === 0) {
+		return getDocumentSymbols(model).then((result: DocumentSymbol[]) => {
+			if (result.length === 0) {
 				return;
 			}
 
-			this._run(editor, result.entries);
+			this._run(editor, result);
 		});
 	}
 
-	private _run(editor: ICommonCodeEditor, result: SymbolInformation[]): void {
+	private _run(editor: ICodeEditor, result: DocumentSymbol[]): void {
 		this._show(this.getController(editor), {
 			getModel: (value: string): QuickOpenModel => {
 				return new QuickOpenModel(this.toQuickOpenEntries(editor, result, value));
@@ -167,7 +169,11 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 		});
 	}
 
-	private toQuickOpenEntries(editor: ICommonCodeEditor, flattened: SymbolInformation[], searchValue: string): SymbolEntry[] {
+	private symbolEntry(name: string, type: string, description: string, range: IRange, highlights: IHighlight[], editor: ICodeEditor, decorator: IDecorator): SymbolEntry {
+		return new SymbolEntry(name, type, description, Range.lift(range), highlights, editor, decorator);
+	}
+
+	private toQuickOpenEntries(editor: ICodeEditor, flattened: DocumentSymbol[], searchValue: string): SymbolEntry[] {
 		const controller = this.getController(editor);
 
 		let results: SymbolEntry[] = [];
@@ -193,7 +199,7 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 				}
 
 				// Add
-				results.push(new SymbolEntry(label, symbolKindToCssClass(element.kind), description, Range.lift(element.location.range), highlights, editor, controller));
+				results.push(this.symbolEntry(label, symbolKindToCssClass(element.kind), description, element.range, highlights, editor, controller));
 			}
 		}
 
@@ -314,3 +320,5 @@ export class QuickOutlineAction extends BaseEditorQuickOpenAction {
 		return elementARange.startLineNumber - elementBRange.startLineNumber;
 	}
 }
+
+registerEditorAction(QuickOutlineAction);

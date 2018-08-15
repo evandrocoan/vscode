@@ -21,15 +21,22 @@ import * as fs from 'fs';
 
 const reporter = createReporter();
 
-const rootDir = path.join(__dirname, '../../src');
-const options = require('../../src/tsconfig.json').compilerOptions;
-options.verbose = false;
-options.sourceMap = true;
-options.rootDir = rootDir;
-options.sourceRoot = util.toFileUri(rootDir);
+function getTypeScriptCompilerOptions(src: string) {
+	const rootDir = path.join(__dirname, `../../${src}`);
+	const options = require(`../../${src}/tsconfig.json`).compilerOptions;
+	options.verbose = false;
+	options.sourceMap = true;
+	if (process.env['VSCODE_NO_SOURCEMAP']) { // To be used by developers in a hurry
+		options.sourceMap = false;
+	}
+	options.rootDir = rootDir;
+	options.sourceRoot = util.toFileUri(rootDir);
+	options.newLine = /\r\n/.test(fs.readFileSync(__filename, 'utf8')) ? 'CRLF' : 'LF';
+	return options;
+}
 
-function createCompile(build: boolean, emitError?: boolean): (token?: util.ICancellationToken) => NodeJS.ReadWriteStream {
-	const opts = _.clone(options);
+function createCompile(src: string, build: boolean, emitError?: boolean): (token?: util.ICancellationToken) => NodeJS.ReadWriteStream {
+	const opts = _.clone(getTypeScriptCompilerOptions(src));
 	opts.inlineSources = !!build;
 	opts.noFilesystemLookup = true;
 
@@ -49,14 +56,13 @@ function createCompile(build: boolean, emitError?: boolean): (token?: util.ICanc
 			.pipe(tsFilter)
 			.pipe(util.loadSourcemaps())
 			.pipe(ts(token))
-			// .pipe(build ? reloadTypeScriptNodeModule() : es.through())
 			.pipe(noDeclarationsFilter)
 			.pipe(build ? nls() : es.through())
 			.pipe(noDeclarationsFilter.restore)
 			.pipe(sourcemaps.write('.', {
 				addComment: false,
 				includeContent: !!build,
-				sourceRoot: options.sourceRoot
+				sourceRoot: opts.sourceRoot
 			}))
 			.pipe(tsFilter.restore)
 			.pipe(reporter.end(emitError));
@@ -65,27 +71,32 @@ function createCompile(build: boolean, emitError?: boolean): (token?: util.ICanc
 	};
 }
 
-export function compileTask(out: string, build: boolean): () => NodeJS.ReadWriteStream {
+export function compileTask(src: string, out: string, build: boolean): () => NodeJS.ReadWriteStream {
 
 	return function () {
-		const compile = createCompile(build, true);
+		const compile = createCompile(src, build, true);
 
-		const src = es.merge(
-			gulp.src('src/**', { base: 'src' }),
+		const srcPipe = es.merge(
+			gulp.src(`${src}/**`, { base: `${src}` }),
 			gulp.src('node_modules/typescript/lib/lib.d.ts'),
 		);
 
-		return src
+		// Do not write .d.ts files to disk, as they are not needed there.
+		const dtsFilter = util.filter(data => !/\.d\.ts$/.test(data.path));
+
+		return srcPipe
 			.pipe(compile())
+			.pipe(dtsFilter)
 			.pipe(gulp.dest(out))
-			.pipe(monacodtsTask(out, false));
+			.pipe(dtsFilter.restore)
+			.pipe(src !== 'src' ? es.through() : monacodtsTask(out, false));
 	};
 }
 
 export function watchTask(out: string, build: boolean): () => NodeJS.ReadWriteStream {
 
 	return function () {
-		const compile = createCompile(build);
+		const compile = createCompile('src', build);
 
 		const src = es.merge(
 			gulp.src('src/**', { base: 'src' }),
@@ -93,61 +104,21 @@ export function watchTask(out: string, build: boolean): () => NodeJS.ReadWriteSt
 		);
 		const watchSrc = watch('src/**', { base: 'src' });
 
+		// Do not write .d.ts files to disk, as they are not needed there.
+		const dtsFilter = util.filter(data => !/\.d\.ts$/.test(data.path));
+
 		return watchSrc
 			.pipe(util.incremental(compile, src, true))
+			.pipe(dtsFilter)
 			.pipe(gulp.dest(out))
+			.pipe(dtsFilter.restore)
 			.pipe(monacodtsTask(out, true));
 	};
 }
 
-function reloadTypeScriptNodeModule(): NodeJS.ReadWriteStream {
-	var util = require('gulp-util');
-	function log(message: any, ...rest: any[]): void {
-		util.log(util.colors.cyan('[memory watch dog]'), message, ...rest);
-	}
-
-	function heapUsed(): string {
-		return (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + ' MB';
-	}
-
-	return es.through(function (data) {
-		this.emit('data', data);
-	}, function () {
-
-		log('memory usage after compilation finished: ' + heapUsed());
-
-		// It appears we are running into some variant of
-		// https://bugs.chromium.org/p/v8/issues/detail?id=2073
-		//
-		// Even though all references are dropped, some
-		// optimized methods in the TS compiler end up holding references
-		// to the entire TypeScript language host (>600MB)
-		//
-		// The idea is to force v8 to drop references to these
-		// optimized methods, by "reloading" the typescript node module
-
-		log('Reloading typescript node module...');
-
-		var resolvedName = require.resolve('typescript');
-
-		var originalModule = require.cache[resolvedName];
-		delete require.cache[resolvedName];
-		var newExports = require('typescript');
-		require.cache[resolvedName] = originalModule;
-
-		for (var prop in newExports) {
-			if (newExports.hasOwnProperty(prop)) {
-				originalModule.exports[prop] = newExports[prop];
-			}
-		}
-
-		log('typescript node module reloaded.');
-
-		this.emit('end');
-	});
-}
-
 function monacodtsTask(out: string, isWatch: boolean): NodeJS.ReadWriteStream {
+
+	const basePath = path.resolve(process.cwd(), out);
 
 	const neededFiles: { [file: string]: boolean; } = {};
 	monacodts.getFilesToWatch(out).forEach(function (filePath) {
@@ -182,6 +153,7 @@ function monacodtsTask(out: string, isWatch: boolean): NodeJS.ReadWriteStream {
 			if (isWatch) {
 				fs.writeFileSync(result.filePath, result.content);
 			} else {
+				fs.writeFileSync(result.filePath, result.content);
 				resultStream.emit('error', 'monaco.d.ts is no longer up to date. Please run gulp watch and commit the new file.');
 			}
 		}
@@ -196,7 +168,7 @@ function monacodtsTask(out: string, isWatch: boolean): NodeJS.ReadWriteStream {
 	}
 
 	resultStream = es.through(function (data) {
-		const filePath = path.normalize(data.path);
+		const filePath = path.normalize(path.resolve(basePath, data.relative));
 		if (neededFiles[filePath]) {
 			setInputFile(filePath, data.contents.toString());
 		}

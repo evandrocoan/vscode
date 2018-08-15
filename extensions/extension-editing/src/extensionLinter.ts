@@ -3,26 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as fs from 'fs';
 import * as path from 'path';
 
-import { parseTree, findNodeAtLocation, Node as JsonNode } from 'jsonc-parser';
 import * as nls from 'vscode-nls';
-import * as MarkdownIt from 'markdown-it';
-import * as parse5 from 'parse5';
+const localize = nls.loadMessageBundle();
 
-import { languages, workspace, Disposable, ExtensionContext, TextDocument, Uri, Diagnostic, Range, DiagnosticSeverity, Position } from 'vscode';
+import { parseTree, findNodeAtLocation, Node as JsonNode } from 'jsonc-parser';
+import * as MarkdownItType from 'markdown-it';
+
+import { languages, workspace, Disposable, TextDocument, Uri, Diagnostic, Range, DiagnosticSeverity, Position } from 'vscode';
 
 const product = require('../../../product.json');
 const allowedBadgeProviders: string[] = (product.extensionAllowedBadgeProviders || []).map(s => s.toLowerCase());
-
-const localize = nls.loadMessageBundle();
 
 const httpsRequired = localize('httpsRequired', "Images must use the HTTPS protocol.");
 const svgsNotValid = localize('svgsNotValid', "SVGs are not a valid image source.");
 const embeddedSvgsNotValid = localize('embeddedSvgsNotValid', "Embedded SVGs are not a valid image source.");
 const dataUrlsNotValid = localize('dataUrlsNotValid', "Data URLs are not a valid image source.");
-const relativeUrlRequiresHttpsRepository = localize('relativeUrlRequiresHttpsRepository', "Relative image URLs require a repository with HTTPS protocol in the package.json.");
+const relativeUrlRequiresHttpsRepository = localize('relativeUrlRequiresHttpsRepository', "Relative image URLs require a repository with HTTPS protocol to be specified in the package.json.");
+const relativeIconUrlRequiresHttpsRepository = localize('relativeIconUrlRequiresHttpsRepository', "An icon requires a repository with HTTPS protocol to be specified in this package.json.");
+const relativeBadgeUrlRequiresHttpsRepository = localize('relativeBadgeUrlRequiresHttpsRepository', "Relative badge URLs require a repository with HTTPS protocol to be specified in this package.json.");
 
 enum Context {
 	ICON,
@@ -31,7 +31,7 @@ enum Context {
 }
 
 interface TokenAndPosition {
-	token: MarkdownIt.Token;
+	token: MarkdownItType.Token;
 	begin: number;
 	end: number;
 }
@@ -51,9 +51,9 @@ export class ExtensionLinter {
 	private packageJsonQ = new Set<TextDocument>();
 	private readmeQ = new Set<TextDocument>();
 	private timer: NodeJS.Timer;
-	private markdownIt = new MarkdownIt();
+	private markdownIt: MarkdownItType.MarkdownIt;
 
-	constructor(private context: ExtensionContext) {
+	constructor() {
 		this.disposables.push(
 			workspace.onDidOpenTextDocument(document => this.queue(document)),
 			workspace.onDidChangeTextDocument(event => this.queue(event.document)),
@@ -146,8 +146,11 @@ export class ExtensionLinter {
 			}
 
 			const text = document.getText();
+			if (!this.markdownIt) {
+				this.markdownIt = new (await import('markdown-it'));
+			}
 			const tokens = this.markdownIt.parse(text, {});
-			const tokensAndPositions = (function toTokensAndPositions(this: ExtensionLinter, tokens: MarkdownIt.Token[], begin = 0, end = text.length): TokenAndPosition[] {
+			const tokensAndPositions = (function toTokensAndPositions(this: ExtensionLinter, tokens: MarkdownItType.Token[], begin = 0, end = text.length): TokenAndPosition[] {
 				const tokensAndPositions = tokens.map<TokenAndPosition>(token => {
 					if (token.map) {
 						const tokenBegin = document.offsetAt(new Position(token.map[0], 0));
@@ -190,8 +193,9 @@ export class ExtensionLinter {
 				});
 
 			let svgStart: Diagnostic;
-			tokensAndPositions.filter(tnp => tnp.token.type === 'text' && tnp.token.content)
-				.map(tnp => {
+			for (const tnp of tokensAndPositions) {
+				if (tnp.token.type === 'text' && tnp.token.content) {
+					const parse5 = await import('parse5');
 					const parser = new parse5.SAXParser({ locationInfo: true });
 					parser.on('startTag', (name, attrs, selfClosing, location) => {
 						if (name === 'img') {
@@ -218,13 +222,14 @@ export class ExtensionLinter {
 					});
 					parser.write(tnp.token.content);
 					parser.end();
-				});
+				}
+			}
 
 			this.diagnosticsCollection.set(document.uri, diagnostics);
-		};
+		}
 	}
 
-	private locateToken(text: string, begin: number, end: number, token: MarkdownIt.Token, content: string) {
+	private locateToken(text: string, begin: number, end: number, token: MarkdownItType.Token, content: string) {
 		if (content) {
 			const tokenBegin = text.indexOf(content, begin);
 			if (tokenBegin !== -1) {
@@ -244,9 +249,10 @@ export class ExtensionLinter {
 	private readPackageJsonInfo(folder: Uri, tree: JsonNode) {
 		const engine = tree && findNodeAtLocation(tree, ['engines', 'vscode']);
 		const repo = tree && findNodeAtLocation(tree, ['repository', 'url']);
+		const uri = repo && parseUri(repo.value);
 		const info: PackageJsonInfo = {
 			isExtension: !!(engine && engine.type === 'string'),
-			hasHttpsRepository: !!(repo && repo.type === 'string' && repo.value && parseUri(repo.value).scheme.toLowerCase() === 'https')
+			hasHttpsRepository: !!(repo && repo.type === 'string' && repo.value && uri && uri.scheme.toLowerCase() === 'https')
 		};
 		const str = folder.toString();
 		const oldInfo = this.folderToPackageJsonInfo[str];
@@ -258,13 +264,16 @@ export class ExtensionLinter {
 	}
 
 	private async loadPackageJson(folder: Uri) {
-		const file = folder.with({ path: path.posix.join(folder.path, 'package.json') });
-		const exists = await fileExists(file.fsPath);
-		if (!exists) {
+		if (folder.scheme === 'git') { // #36236
 			return undefined;
 		}
-		const document = await workspace.openTextDocument(file);
-		return parseTree(document.getText());
+		const file = folder.with({ path: path.posix.join(folder.path, 'package.json') });
+		try {
+			const document = await workspace.openTextDocument(file);
+			return parseTree(document.getText());
+		} catch (err) {
+			return undefined;
+		}
 	}
 
 	private packageJsonChanged(folder: Uri) {
@@ -280,6 +289,9 @@ export class ExtensionLinter {
 
 	private addDiagnostics(diagnostics: Diagnostic[], document: TextDocument, begin: number, end: number, src: string, context: Context, info: PackageJsonInfo) {
 		const uri = parseUri(src);
+		if (!uri) {
+			return;
+		}
 		const scheme = uri.scheme.toLowerCase();
 
 		if (scheme && scheme !== 'https' && scheme !== 'data') {
@@ -294,7 +306,14 @@ export class ExtensionLinter {
 
 		if (!scheme && !info.hasHttpsRepository) {
 			const range = new Range(document.positionAt(begin), document.positionAt(end));
-			diagnostics.push(new Diagnostic(range, relativeUrlRequiresHttpsRepository, DiagnosticSeverity.Warning));
+			let message = (() => {
+				switch (context) {
+					case Context.ICON: return relativeIconUrlRequiresHttpsRepository;
+					case Context.BADGE: return relativeBadgeUrlRequiresHttpsRepository;
+					default: return relativeUrlRequiresHttpsRepository;
+				}
+			})();
+			diagnostics.push(new Diagnostic(range, message, DiagnosticSeverity.Warning));
 		}
 
 		if (endsWith(uri.path.toLowerCase(), '.svg') && allowedBadgeProviders.indexOf(uri.authority.toLowerCase()) === -1) {
@@ -325,20 +344,6 @@ function endsWith(haystack: string, needle: string): boolean {
 	}
 }
 
-function fileExists(path: string): Promise<boolean> {
-	return new Promise((resolve, reject) => {
-		fs.lstat(path, (err, stats) => {
-			if (!err) {
-				resolve(true);
-			} else if (err.code === 'ENOENT') {
-				resolve(false);
-			} else {
-				reject(err);
-			}
-		});
-	});
-}
-
 function parseUri(src: string) {
 	try {
 		return Uri.parse(src);
@@ -346,7 +351,7 @@ function parseUri(src: string) {
 		try {
 			return Uri.parse(encodeURI(src));
 		} catch (err) {
-			return Uri.parse('');
+			return null;
 		}
 	}
 }

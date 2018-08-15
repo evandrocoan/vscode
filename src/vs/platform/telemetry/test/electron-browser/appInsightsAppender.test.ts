@@ -6,11 +6,12 @@
 
 import * as assert from 'assert';
 import { AppInsightsAppender } from 'vs/platform/telemetry/node/appInsightsAppender';
+import { ILogService, AbstractLogService, LogLevel, DEFAULT_LOG_LEVEL } from 'vs/platform/log/common/log';
 
 interface IAppInsightsEvent {
 	eventName: string;
-	properties?: { string?: string; };
-	measurements?: { string?: number; };
+	properties?: { [x: string]: string; };
+	measurements?: { [x: string]: number; };
 }
 
 class AppInsightsMock {
@@ -34,15 +35,65 @@ class AppInsightsMock {
 		this.exceptions.push(exception);
 	}
 
-	public sendPendingData(callback): void {
+	public sendPendingData(_callback: any): void {
 		// called on dispose
 	}
+}
+
+class TestableLogService extends AbstractLogService implements ILogService {
+	_serviceBrand: any;
+
+	public logs: string[] = [];
+
+	constructor(logLevel: LogLevel = DEFAULT_LOG_LEVEL) {
+		super();
+		this.setLevel(logLevel);
+	}
+
+	trace(message: string, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Trace) {
+			this.logs.push(message + JSON.stringify(args));
+		}
+	}
+
+	debug(message: string, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Debug) {
+			this.logs.push(message);
+		}
+	}
+
+	info(message: string, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Info) {
+			this.logs.push(message);
+		}
+	}
+
+	warn(message: string | Error, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Warning) {
+			this.logs.push(message.toString());
+		}
+	}
+
+	error(message: string, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Error) {
+			this.logs.push(message);
+		}
+	}
+
+	critical(message: string, ...args: any[]): void {
+		if (this.getLevel() <= LogLevel.Critical) {
+			this.logs.push(message);
+		}
+	}
+
+	dispose(): void { }
 }
 
 suite('AIAdapter', () => {
 	var appInsightsMock: AppInsightsMock;
 	var adapter: AppInsightsAppender;
 	var prefix = 'prefix';
+
 
 	setup(() => {
 		appInsightsMock = new AppInsightsMock();
@@ -74,18 +125,18 @@ suite('AIAdapter', () => {
 
 	test('property limits', () => {
 		var reallyLongPropertyName = 'abcdefghijklmnopqrstuvwxyz';
-		for (var i = 0; i < 6; i++) {
+		for (let i = 0; i < 6; i++) {
 			reallyLongPropertyName += 'abcdefghijklmnopqrstuvwxyz';
 		}
 		assert(reallyLongPropertyName.length > 150);
 
 		var reallyLongPropertyValue = 'abcdefghijklmnopqrstuvwxyz012345678901234567890123';
-		for (var i = 0; i < 21; i++) {
+		for (let i = 0; i < 21; i++) {
 			reallyLongPropertyValue += 'abcdefghijklmnopqrstuvwxyz012345678901234567890123';
 		}
 		assert(reallyLongPropertyValue.length > 1024);
 
-		var data = {};
+		var data = Object.create(null);
 		data[reallyLongPropertyName] = '1234';
 		data['reallyLongPropertyValue'] = reallyLongPropertyValue;
 		adapter.log('testEvent', data);
@@ -140,5 +191,28 @@ suite('AIAdapter', () => {
 
 		assert.equal(appInsightsMock.events[0].properties['nestedObj.nestedObj2.nestedObj3'], JSON.stringify({ 'testProperty': 'test' }));
 		assert.equal(appInsightsMock.events[0].measurements['nestedObj.testMeasurement'], 1);
+	});
+
+	test('Do not Log Telemetry if log level is not trace', () => {
+		const logService = new TestableLogService(LogLevel.Info);
+		adapter = new AppInsightsAppender(prefix, { 'common.platform': 'Windows' }, () => appInsightsMock, logService);
+		adapter.log('testEvent', { hello: 'world', isTrue: true, numberBetween1And3: 2 });
+		assert.equal(logService.logs.length, 0);
+	});
+
+	test('Log Telemetry if log level is trace', () => {
+		const logService = new TestableLogService(LogLevel.Trace);
+		adapter = new AppInsightsAppender(prefix, { 'common.platform': 'Windows' }, () => appInsightsMock, logService);
+		adapter.log('testEvent', { hello: 'world', isTrue: true, numberBetween1And3: 2 });
+		assert.equal(logService.logs.length, 1);
+		assert.equal(logService.logs[0], 'telemetry/testEvent' + JSON.stringify([{
+			properties: {
+				hello: 'world',
+				'common.platform': 'Windows'
+			},
+			measurements: {
+				isTrue: 1, numberBetween1And3: 2
+			}
+		}]));
 	});
 });

@@ -6,40 +6,88 @@
 
 import { TPromise } from 'vs/base/common/winjs.base';
 import * as nls from 'vs/nls';
+import * as platform from 'vs/base/common/platform';
 import { Registry } from 'vs/platform/registry/common/platform';
 import { Action } from 'vs/base/common/actions';
-import { SyncActionDescriptor } from 'vs/platform/actions/common/actions';
-import { IWorkbenchActionRegistry, Extensions } from 'vs/workbench/common/actionRegistry';
-import { IConfigurationEditingService, ConfigurationTarget } from 'vs/workbench/services/configuration/common/configurationEditing';
-import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { SyncActionDescriptor, MenuRegistry, MenuId } from 'vs/platform/actions/common/actions';
+import { IWorkbenchActionRegistry, Extensions } from 'vs/workbench/common/actions';
+import { IConfigurationService, ConfigurationTarget } from 'vs/platform/configuration/common/configuration';
+import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions, IWorkbenchContribution } from 'vs/workbench/common/contributions';
+import { LifecyclePhase } from 'vs/platform/lifecycle/common/lifecycle';
+import { RawContextKey, IContextKeyService, IContextKey } from 'vs/platform/contextkey/common/contextkey';
 
 export class ToggleMultiCursorModifierAction extends Action {
 
-	public static ID = 'workbench.action.toggleMultiCursorModifier';
-	public static LABEL = nls.localize('toggleLocation', "Toggle Multi-Cursor Modifier");
+	public static readonly ID = 'workbench.action.toggleMultiCursorModifier';
+	public static readonly LABEL = nls.localize('toggleLocation', "Toggle Multi-Cursor Modifier");
 
-	private static multiCursorModifierConfigurationKey = 'editor.multiCursorModifier';
+	private static readonly multiCursorModifierConfigurationKey = 'editor.multiCursorModifier';
 
 	constructor(
 		id: string,
 		label: string,
-		@IConfigurationService private configurationService: IConfigurationService,
-		@IConfigurationEditingService private configurationEditingService: IConfigurationEditingService
+		@IConfigurationService private configurationService: IConfigurationService
 	) {
 		super(id, label);
-
-		this.enabled = !!this.configurationService && !!this.configurationEditingService;
 	}
 
 	public run(): TPromise<any> {
-		const editorConf = this.configurationService.getConfiguration<{ multiCursorModifier: 'ctrlCmd' | 'alt' }>('editor');
+		const editorConf = this.configurationService.getValue<{ multiCursorModifier: 'ctrlCmd' | 'alt' }>('editor');
 		const newValue: 'ctrlCmd' | 'alt' = (editorConf.multiCursorModifier === 'ctrlCmd' ? 'alt' : 'ctrlCmd');
 
-		this.configurationEditingService.writeConfiguration(ConfigurationTarget.USER, { key: ToggleMultiCursorModifierAction.multiCursorModifierConfigurationKey, value: newValue });
-
-		return TPromise.as(null);
+		return this.configurationService.updateValue(ToggleMultiCursorModifierAction.multiCursorModifierConfigurationKey, newValue, ConfigurationTarget.USER);
 	}
 }
 
+const multiCursorModifier = new RawContextKey<string>('multiCursorModifier', 'altKey');
+
+class MultiCursorModifierContextKeyController implements IWorkbenchContribution {
+
+	private readonly _multiCursorModifier: IContextKey<string>;
+
+	constructor(
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IContextKeyService contextKeyService: IContextKeyService
+	) {
+		this._multiCursorModifier = multiCursorModifier.bindTo(contextKeyService);
+		configurationService.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration('editor.multiCursorModifier')) {
+				this._update();
+			}
+		});
+	}
+
+	private _update(): void {
+		const editorConf = this.configurationService.getValue<{ multiCursorModifier: 'ctrlCmd' | 'alt' }>('editor');
+		const value = (editorConf.multiCursorModifier === 'ctrlCmd' ? 'ctrlCmd' : 'altKey');
+		this._multiCursorModifier.set(value);
+	}
+}
+
+Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution(MultiCursorModifierContextKeyController, LifecyclePhase.Running);
+
+
 const registry = Registry.as<IWorkbenchActionRegistry>(Extensions.WorkbenchActions);
 registry.registerWorkbenchAction(new SyncActionDescriptor(ToggleMultiCursorModifierAction, ToggleMultiCursorModifierAction.ID, ToggleMultiCursorModifierAction.LABEL), 'Toggle Multi-Cursor Modifier');
+MenuRegistry.appendMenuItem(MenuId.MenubarSelectionMenu, {
+	group: '3_multi',
+	command: {
+		id: ToggleMultiCursorModifierAction.ID,
+		title: nls.localize('miMultiCursorAlt', "Switch to Alt+Click for Multi-Cursor")
+	},
+	when: multiCursorModifier.isEqualTo('ctrlCmd'),
+	order: 1
+});
+MenuRegistry.appendMenuItem(MenuId.MenubarSelectionMenu, {
+	group: '3_multi',
+	command: {
+		id: ToggleMultiCursorModifierAction.ID,
+		title: (
+			platform.isMacintosh
+				? nls.localize('miMultiCursorCmd', "Switch to Cmd+Click for Multi-Cursor")
+				: nls.localize('miMultiCursorCtrl', "Switch to Ctrl+Click for Multi-Cursor")
+		)
+	},
+	when: multiCursorModifier.isEqualTo('altKey'),
+	order: 1
+});

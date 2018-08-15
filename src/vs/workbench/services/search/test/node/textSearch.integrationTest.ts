@@ -5,8 +5,8 @@
 
 'use strict';
 
-import path = require('path');
-import assert = require('assert');
+import * as path from 'path';
+import * as assert from 'assert';
 
 import * as glob from 'vs/base/common/glob';
 import { TPromise } from 'vs/base/common/winjs.base';
@@ -15,12 +15,13 @@ import { ISerializedFileMatch, IRawSearch, IFolderSearch } from 'vs/workbench/se
 import { Engine as TextSearchEngine } from 'vs/workbench/services/search/node/textSearch';
 import { RipgrepEngine } from 'vs/workbench/services/search/node/ripgrepTextSearch';
 import { TextSearchWorkerProvider } from 'vs/workbench/services/search/node/textSearchWorkerProvider';
+import { getPathFromAmdModule } from 'vs/base/common/amd';
 
 function countAll(matches: ISerializedFileMatch[]): number {
 	return matches.reduce((acc, m) => acc + m.numMatches, 0);
 }
 
-const TEST_FIXTURES = path.normalize(require.toUrl('./fixtures'));
+const TEST_FIXTURES = path.normalize(getPathFromAmdModule(require, './fixtures'));
 const EXAMPLES_FIXTURES = path.join(TEST_FIXTURES, 'examples');
 const MORE_FIXTURES = path.join(TEST_FIXTURES, 'more');
 const TEST_ROOT_FOLDER: IFolderSearch = { folder: TEST_FIXTURES };
@@ -37,7 +38,7 @@ const textSearchWorkerProvider = new TextSearchWorkerProvider();
 
 function doLegacySearchTest(config: IRawSearch, expectedResultCount: number | Function): TPromise<void> {
 	return new TPromise<void>((resolve, reject) => {
-		let engine = new TextSearchEngine(config, new FileWalker(config), textSearchWorkerProvider);
+		let engine = new TextSearchEngine(config, new FileWalker({ ...config, useRipgrep: false }), textSearchWorkerProvider);
 
 		let c = 0;
 		engine.search((result) => {
@@ -50,7 +51,7 @@ function doLegacySearchTest(config: IRawSearch, expectedResultCount: number | Fu
 				if (typeof expectedResultCount === 'function') {
 					assert(expectedResultCount(c));
 				} else {
-					assert.equal(c, expectedResultCount);
+					assert.equal(c, expectedResultCount, 'legacy');
 				}
 			} catch (e) {
 				reject(e);
@@ -61,7 +62,7 @@ function doLegacySearchTest(config: IRawSearch, expectedResultCount: number | Fu
 	});
 }
 
-function doRipgrepSearchTest(config: IRawSearch, expectedResultCount: number): TPromise<void> {
+function doRipgrepSearchTest(config: IRawSearch, expectedResultCount: number | Function): TPromise<void> {
 	return new TPromise<void>((resolve, reject) => {
 		let engine = new RipgrepEngine(config);
 
@@ -76,7 +77,7 @@ function doRipgrepSearchTest(config: IRawSearch, expectedResultCount: number): T
 				if (typeof expectedResultCount === 'function') {
 					assert(expectedResultCount(c));
 				} else {
-					assert.equal(c, expectedResultCount);
+					assert.equal(c, expectedResultCount, 'rg');
 				}
 			} catch (e) {
 				reject(e);
@@ -87,108 +88,138 @@ function doRipgrepSearchTest(config: IRawSearch, expectedResultCount: number): T
 	});
 }
 
-function doSearchTest(config: IRawSearch, expectedResultCount: number, done) {
+function doSearchTest(config: IRawSearch, expectedResultCount: number) {
 	return doLegacySearchTest(config, expectedResultCount)
-		.then(() => doRipgrepSearchTest(config, expectedResultCount))
-		.then(done, done);
+		.then(() => doRipgrepSearchTest(config, expectedResultCount));
 }
 
 suite('Search-integration', function () {
 	this.timeout(1000 * 60); // increase timeout for this suite
 
-	test('Text: GameOfLife', function (done: () => void) {
+	test('Text: GameOfLife', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'GameOfLife' },
 		};
 
-		doSearchTest(config, 4, done);
+		return doSearchTest(config, 4);
 	});
 
-	test('Text: GameOfLife (RegExp)', function (done: () => void) {
+	test('Text: GameOfLife (RegExp)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'Game.?fL\\w?fe', isRegExp: true }
 		};
 
-		doSearchTest(config, 4, done);
+		return doSearchTest(config, 4);
 	});
 
-	test('Text: GameOfLife (RegExp to EOL)', function (done: () => void) {
+	test('Text: GameOfLife (RegExp to EOL)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'GameOfLife.*', isRegExp: true }
 		};
 
-		doSearchTest(config, 4, done);
+		return doSearchTest(config, 4);
 	});
 
-	test('Text: GameOfLife (Word Match, Case Sensitive)', function (done: () => void) {
+	test('Text: GameOfLife (Word Match, Case Sensitive)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'GameOfLife', isWordMatch: true, isCaseSensitive: true }
 		};
 
-		doSearchTest(config, 4, done);
+		return doSearchTest(config, 4);
 	});
 
-	test('Text: GameOfLife (Word Match, Spaces)', function (done: () => void) {
+	test('Text: GameOfLife (Word Match, Spaces)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: ' GameOfLife ', isWordMatch: true }
 		};
 
-		doSearchTest(config, 1, done);
+		return doSearchTest(config, 1);
 	});
 
-	test('Text: GameOfLife (Word Match, Punctuation and Spaces)', function (done: () => void) {
+	test('Text: GameOfLife (Word Match, Punctuation and Spaces)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: ', as =', isWordMatch: true }
 		};
 
-		doSearchTest(config, 1, done);
+		return doSearchTest(config, 1);
 	});
 
-	test('Text: Helvetica (UTF 16)', function (done: () => void) {
+	test('Text: Helvetica (UTF 16)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'Helvetica' }
 		};
 
-		doSearchTest(config, 3, done);
+		return doSearchTest(config, 3);
 	});
 
-	test('Text: e', function (done: () => void) {
+	test('Text: e', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'e' }
 		};
 
-		doSearchTest(config, 776, done);
+		return doSearchTest(config, 776);
 	});
 
-	test('Text: e (with excludes)', function (done: () => void) {
+	test('Text: e (with excludes)', () => {
 		const config: any = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'e' },
 			excludePattern: { '**/examples': true }
 		};
 
-		doSearchTest(config, 394, done);
+		return doSearchTest(config, 394);
 	});
 
-	test('Text: e (with includes)', function (done: () => void) {
+	test('Text: e (with includes)', () => {
 		const config: any = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'e' },
 			includePattern: { '**/examples/**': true }
 		};
 
-		doSearchTest(config, 382, done);
+		return doSearchTest(config, 382);
 	});
 
-	test('Text: e (with includes and exclude)', function (done: () => void) {
+	test('Text: e (with absolute path excludes)', () => {
+		const config: any = {
+			folderQueries: ROOT_FOLDER_QUERY,
+			contentPattern: { pattern: 'e' },
+			excludePattern: makeExpression(path.join(TEST_FIXTURES, '**/examples'))
+		};
+
+		return doSearchTest(config, 394);
+	});
+
+	test('Text: e (with mixed absolute/relative path excludes)', () => {
+		const config: any = {
+			folderQueries: ROOT_FOLDER_QUERY,
+			contentPattern: { pattern: 'e' },
+			excludePattern: makeExpression(path.join(TEST_FIXTURES, '**/examples'), '*.css')
+		};
+
+		return doSearchTest(config, 310);
+	});
+
+	test('Text: sibling exclude', () => {
+		const config: any = {
+			folderQueries: ROOT_FOLDER_QUERY,
+			contentPattern: { pattern: 'm' },
+			includePattern: makeExpression('**/site*'),
+			excludePattern: { '*.css': { when: '$(basename).less' } }
+		};
+
+		return doSearchTest(config, 1);
+	});
+
+	test('Text: e (with includes and exclude)', () => {
 		const config: any = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'e' },
@@ -196,10 +227,10 @@ suite('Search-integration', function () {
 			excludePattern: { '**/examples/small.js': true }
 		};
 
-		doSearchTest(config, 361, done);
+		return doSearchTest(config, 361);
 	});
 
-	test('Text: a (capped)', function (done: () => void) {
+	test('Text: a (capped)', () => {
 		const maxResults = 520;
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
@@ -210,58 +241,57 @@ suite('Search-integration', function () {
 		// (Legacy) search can go over the maxResults because it doesn't trim the results from its worker processes to the exact max size.
 		// But the worst-case scenario should be 2*max-1
 		return doLegacySearchTest(config, count => count < maxResults * 2)
-			.then(() => doRipgrepSearchTest(config, maxResults))
-			.then(done, done);
+			.then(() => doRipgrepSearchTest(config, maxResults));
 	});
 
-	test('Text: a (no results)', function (done: () => void) {
+	test('Text: a (no results)', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: 'ahsogehtdas' }
 		};
 
-		doSearchTest(config, 0, done);
+		return doSearchTest(config, 0);
 	});
 
-	test('Text: -size', function (done: () => void) {
+	test('Text: -size', () => {
 		const config = {
 			folderQueries: ROOT_FOLDER_QUERY,
 			contentPattern: { pattern: '-size' }
 		};
 
-		doSearchTest(config, 9, done);
+		return doSearchTest(config, 9);
 	});
 
-	test('Multiroot: Conway', function (done: () => void) {
+	test('Multiroot: Conway', () => {
 		const config: IRawSearch = {
 			folderQueries: MULTIROOT_QUERIES,
 			contentPattern: { pattern: 'conway' }
 		};
 
-		doSearchTest(config, 8, done);
+		return doSearchTest(config, 8);
 	});
 
-	test('Multiroot: e with partial global exclude', function (done: () => void) {
+	test('Multiroot: e with partial global exclude', () => {
 		const config: IRawSearch = {
 			folderQueries: MULTIROOT_QUERIES,
 			contentPattern: { pattern: 'e' },
 			excludePattern: makeExpression('**/*.txt')
 		};
 
-		doSearchTest(config, 382, done);
+		return doSearchTest(config, 382);
 	});
 
-	test('Multiroot: e with global excludes', function (done: () => void) {
+	test('Multiroot: e with global excludes', () => {
 		const config: IRawSearch = {
 			folderQueries: MULTIROOT_QUERIES,
 			contentPattern: { pattern: 'e' },
 			excludePattern: makeExpression('**/*.txt', '**/*.js')
 		};
 
-		doSearchTest(config, 0, done);
+		return doSearchTest(config, 0);
 	});
 
-	test('Multiroot: e with folder exclude', function (done: () => void) {
+	test('Multiroot: e with folder exclude', () => {
 		const config: IRawSearch = {
 			folderQueries: [
 				{ folder: EXAMPLES_FIXTURES, excludePattern: makeExpression('**/e*.js') },
@@ -270,10 +300,15 @@ suite('Search-integration', function () {
 			contentPattern: { pattern: 'e' }
 		};
 
-		doSearchTest(config, 286, done);
+		return doSearchTest(config, 286);
 	});
 });
 
 function makeExpression(...patterns: string[]): glob.IExpression {
-	return patterns.reduce((glob, cur) => { glob[cur] = true; return glob; }, Object.create(null));
+	return patterns.reduce((glob, pattern) => {
+		// glob.ts needs forward slashes
+		pattern = pattern.replace(/\\/g, '/');
+		glob[pattern] = true;
+		return glob;
+	}, Object.create(null));
 }

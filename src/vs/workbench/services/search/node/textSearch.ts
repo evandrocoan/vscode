@@ -11,13 +11,13 @@ import { onUnexpectedError } from 'vs/base/common/errors';
 import { IProgress } from 'vs/platform/search/common/search';
 import { FileWalker } from 'vs/workbench/services/search/node/fileSearch';
 
-import { ISerializedFileMatch, ISerializedSearchComplete, IRawSearch, ISearchEngine } from './search';
+import { ISerializedFileMatch, IRawSearch, ISearchEngine, ISerializedSearchSuccess } from './search';
 import { ISearchWorker } from './worker/searchWorkerIpc';
 import { ITextSearchWorkerProvider } from './textSearchWorkerProvider';
 
 export class Engine implements ISearchEngine<ISerializedFileMatch[]> {
 
-	private static PROGRESS_FLUSH_CHUNK_SIZE = 50; // optimization: number of files to process before emitting progress event
+	private static readonly PROGRESS_FLUSH_CHUNK_SIZE = 50; // optimization: number of files to process before emitting progress event
 
 	private config: IRawSearch;
 	private walker: FileWalker;
@@ -60,7 +60,7 @@ export class Engine implements ISearchEngine<ISerializedFileMatch[]> {
 		});
 	}
 
-	search(onResult: (match: ISerializedFileMatch[]) => void, onProgress: (progress: IProgress) => void, done: (error: Error, complete: ISerializedSearchComplete) => void): void {
+	search(onResult: (match: ISerializedFileMatch[]) => void, onProgress: (progress: IProgress) => void, done: (error: Error, complete: ISerializedSearchSuccess) => void): void {
 		this.workers = this.workerProvider.getWorkers();
 		this.initializeWorkers();
 
@@ -86,6 +86,7 @@ export class Engine implements ISearchEngine<ISerializedFileMatch[]> {
 			if (!this.isDone && this.processedBytes === this.totalBytes && this.walkerIsDone) {
 				this.isDone = true;
 				done(this.walkerError, {
+					type: 'success',
 					limitHit: this.limitReached,
 					stats: this.walker.getStats()
 				});
@@ -147,20 +148,22 @@ export class Engine implements ISearchEngine<ISerializedFileMatch[]> {
 				nextBatch = [];
 				nextBatchBytes = 0;
 			}
-		}, (error, isLimitHit) => {
-			this.walkerIsDone = true;
-			this.walkerError = error;
+		},
+			onProgress,
+			(error, isLimitHit) => {
+				this.walkerIsDone = true;
+				this.walkerError = error;
 
-			// Send any remaining paths to a worker, or unwind if we're stopping
-			if (nextBatch.length) {
-				if (this.limitReached || this.isCanceled) {
-					unwind(nextBatchBytes);
+				// Send any remaining paths to a worker, or unwind if we're stopping
+				if (nextBatch.length) {
+					if (this.limitReached || this.isCanceled) {
+						unwind(nextBatchBytes);
+					} else {
+						run(nextBatch, nextBatchBytes);
+					}
 				} else {
-					run(nextBatch, nextBatchBytes);
+					unwind(0);
 				}
-			} else {
-				unwind(0);
-			}
-		});
+			});
 	}
 }

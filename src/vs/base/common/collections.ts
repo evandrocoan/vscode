@@ -29,9 +29,9 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
  */
 export function values<T>(from: IStringDictionary<T> | INumberDictionary<T>): T[] {
 	const result: T[] = [];
-	for (var key in from) {
+	for (let key in from) {
 		if (hasOwnProperty.call(from, key)) {
-			result.push(from[key]);
+			result.push((from as any)[key]);
 		}
 	}
 	return result;
@@ -39,12 +39,21 @@ export function values<T>(from: IStringDictionary<T> | INumberDictionary<T>): T[
 
 export function size<T>(from: IStringDictionary<T> | INumberDictionary<T>): number {
 	let count = 0;
-	for (var key in from) {
+	for (let key in from) {
 		if (hasOwnProperty.call(from, key)) {
 			count += 1;
 		}
 	}
 	return count;
+}
+
+export function first<T>(from: IStringDictionary<T> | INumberDictionary<T>): T {
+	for (let key in from) {
+		if (hasOwnProperty.call(from, key)) {
+			return from[key];
+		}
+	}
+	return undefined;
 }
 
 /**
@@ -54,8 +63,8 @@ export function size<T>(from: IStringDictionary<T> | INumberDictionary<T>): numb
 export function forEach<T>(from: IStringDictionary<T> | INumberDictionary<T>, callback: (entry: { key: any; value: T; }, remove: Function) => any): void {
 	for (let key in from) {
 		if (hasOwnProperty.call(from, key)) {
-			const result = callback({ key: key, value: from[key] }, function () {
-				delete from[key];
+			const result = callback({ key: key, value: (from as any)[key] }, function () {
+				delete (from as any)[key];
 			});
 			if (result === false) {
 				return;
@@ -72,7 +81,7 @@ export function remove<T>(from: IStringDictionary<T> | INumberDictionary<T>, key
 	if (!hasOwnProperty.call(from, key)) {
 		return false;
 	}
-	delete from[key];
+	delete (from as any)[key];
 	return true;
 }
 

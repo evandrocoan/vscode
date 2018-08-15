@@ -6,10 +6,11 @@
 import 'vs/css!./list';
 import { IDisposable } from 'vs/base/common/lifecycle';
 import { range } from 'vs/base/common/arrays';
-import { IDelegate, IRenderer, IListEvent } from './list';
-import { List, IListOptions } from './listWidget';
+import { IVirtualDelegate, IRenderer, IListEvent, IListOpenEvent } from './list';
+import { List, IListStyles, IListOptions } from './listWidget';
 import { IPagedModel } from 'vs/base/common/paging';
-import Event, { mapEvent } from 'vs/base/common/event';
+import { Event, mapEvent } from 'vs/base/common/event';
+import { CancellationTokenSource } from 'vs/base/common/cancellation';
 
 export interface IPagedRenderer<TElement, TTemplateData> extends IRenderer<TElement, TTemplateData> {
 	renderPlaceholder(index: number, templateData: TTemplateData): void;
@@ -43,11 +44,16 @@ class PagedRenderer<TElement, TTemplateData> implements IRenderer<number, ITempl
 			return this.renderer.renderElement(model.get(index), index, data.data);
 		}
 
-		const promise = model.resolve(index);
-		data.disposable = { dispose: () => promise.cancel() };
+		const cts = new CancellationTokenSource();
+		const promise = model.resolve(index, cts.token);
+		data.disposable = { dispose: () => cts.cancel() };
 
 		this.renderer.renderPlaceholder(index, data.data);
-		promise.done(entry => this.renderer.renderElement(entry, index, data.data));
+		promise.then(entry => this.renderer.renderElement(entry, index, data.data));
+	}
+
+	disposeElement(): void {
+		// noop
 	}
 
 	disposeTemplate(data: ITemplateData<TTemplateData>): void {
@@ -58,27 +64,55 @@ class PagedRenderer<TElement, TTemplateData> implements IRenderer<number, ITempl
 	}
 }
 
-export class PagedList<T> {
+export class PagedList<T> implements IDisposable {
 
 	private list: List<number>;
 	private _model: IPagedModel<T>;
 
 	constructor(
 		container: HTMLElement,
-		delegate: IDelegate<number>,
+		virtualDelegate: IVirtualDelegate<number>,
 		renderers: IPagedRenderer<T, any>[],
-		options: IListOptions<any> = {} // TODO@Joao: should be IListOptions<T>
+		options: IListOptions<any> = {}
 	) {
 		const pagedRenderers = renderers.map(r => new PagedRenderer<T, ITemplateData<T>>(r, () => this.model));
-		this.list = new List(container, delegate, pagedRenderers, options);
+		this.list = new List(container, virtualDelegate, pagedRenderers, options);
+	}
+
+	getHTMLElement(): HTMLElement {
+		return this.list.getHTMLElement();
+	}
+
+	isDOMFocused(): boolean {
+		return this.list.getHTMLElement() === document.activeElement;
+	}
+
+	domFocus(): void {
+		this.list.domFocus();
+	}
+
+	get onDidFocus(): Event<void> {
+		return this.list.onDidFocus;
+	}
+
+	get onDidBlur(): Event<void> {
+		return this.list.onDidBlur;
 	}
 
 	get widget(): List<number> {
 		return this.list;
 	}
 
+	get onDidDispose(): Event<void> {
+		return this.list.onDidDispose;
+	}
+
 	get onFocusChange(): Event<IListEvent<T>> {
 		return mapEvent(this.list.onFocusChange, ({ elements, indexes }) => ({ elements: elements.map(e => this._model.get(e)), indexes }));
+	}
+
+	get onOpen(): Event<IListOpenEvent<T>> {
+		return mapEvent(this.list.onOpen, ({ elements, indexes, browserEvent }) => ({ elements: elements.map(e => this._model.get(e)), indexes, browserEvent }));
 	}
 
 	get onSelectionChange(): Event<IListEvent<T>> {
@@ -108,6 +142,14 @@ export class PagedList<T> {
 
 	set scrollTop(scrollTop: number) {
 		this.list.scrollTop = scrollTop;
+	}
+
+	open(indexes: number[], browserEvent?: UIEvent): void {
+		this.list.open(indexes, browserEvent);
+	}
+
+	setFocus(indexes: number[]): void {
+		this.list.setFocus(indexes);
 	}
 
 	focusNext(n?: number, loop?: boolean): void {
@@ -142,11 +184,23 @@ export class PagedList<T> {
 		this.list.setSelection(indexes);
 	}
 
+	getSelection(): number[] {
+		return this.list.getSelection();
+	}
+
 	layout(height?: number): void {
 		this.list.layout(height);
 	}
 
 	reveal(index: number, relativeTop?: number): void {
 		this.list.reveal(index, relativeTop);
+	}
+
+	style(styles: IListStyles): void {
+		this.list.style(styles);
+	}
+
+	dispose(): void {
+		this.list.dispose();
 	}
 }
