@@ -2,14 +2,18 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import { ICompletionItem } from 'vs/editor/contrib/suggest/completionModel';
 import { LRUCache, TernarySearchTree } from 'vs/base/common/map';
 import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
 import { ITextModel } from 'vs/editor/common/model';
 import { IPosition } from 'vs/editor/common/core/position';
+import { CompletionItemKind, completionKindFromLegacyString } from 'vs/editor/common/modes';
+import { Disposable } from 'vs/base/common/lifecycle';
 import { RunOnceScheduler } from 'vs/base/common/async';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
 
 export abstract class Memory {
 
@@ -55,7 +59,7 @@ export class NoMemory extends Memory {
 }
 
 export interface MemItem {
-	type: string;
+	type: string | CompletionItemKind;
 	insertText: string;
 	touch: number;
 }
@@ -70,7 +74,7 @@ export class LRUMemory extends Memory {
 		const key = `${model.getLanguageIdentifier().language}/${label}`;
 		this._cache.set(key, {
 			touch: this._seq++,
-			type: item.suggestion.type,
+			type: item.suggestion.kind,
 			insertText: item.suggestion.insertText
 		});
 	}
@@ -94,7 +98,7 @@ export class LRUMemory extends Memory {
 			const { suggestion } = items[i];
 			const key = `${model.getLanguageIdentifier().language}/${suggestion.label}`;
 			const item = this._cache.get(key);
-			if (item && item.touch > seq && item.type === suggestion.type && item.insertText === suggestion.insertText) {
+			if (item && item.touch > seq && item.type === suggestion.kind && item.insertText === suggestion.insertText) {
 				seq = item.touch;
 				res = i;
 			}
@@ -119,6 +123,7 @@ export class LRUMemory extends Memory {
 		let seq = 0;
 		for (const [key, value] of data) {
 			value.touch = seq;
+			value.type = typeof value.type === 'number' ? value.type : completionKindFromLegacyString(value.type);
 			this._cache.set(key, value);
 		}
 		this._seq = this._cache.size;
@@ -135,7 +140,7 @@ export class PrefixMemory extends Memory {
 		const { word } = model.getWordUntilPosition(pos);
 		const key = `${model.getLanguageIdentifier().language}/${word}`;
 		this._trie.set(key, {
-			type: item.suggestion.type,
+			type: item.suggestion.kind,
 			insertText: item.suggestion.insertText,
 			touch: this._seq++
 		});
@@ -153,8 +158,8 @@ export class PrefixMemory extends Memory {
 		}
 		if (item) {
 			for (let i = 0; i < items.length; i++) {
-				let { type, insertText } = items[i].suggestion;
-				if (type === item.type && insertText === item.insertText) {
+				let { kind, insertText } = items[i].suggestion;
+				if (kind === item.type && insertText === item.insertText) {
 					return i;
 				}
 			}
@@ -182,6 +187,7 @@ export class PrefixMemory extends Memory {
 		if (data.length > 0) {
 			this._seq = data[0][1].touch + 1;
 			for (const [key, value] of data) {
+				value.type = typeof value.type === 'number' ? value.type : completionKindFromLegacyString(value.type);
 				this._trie.set(key, value);
 			}
 		}
@@ -190,31 +196,56 @@ export class PrefixMemory extends Memory {
 
 export type MemMode = 'first' | 'recentlyUsed' | 'recentlyUsedByPrefix';
 
-export class SuggestMemories {
+class SuggestMemoryService extends Disposable implements ISuggestMemoryService {
+
+	readonly _serviceBrand: any;
 
 	private readonly _storagePrefix = 'suggest/memories';
 
+	private readonly _persistSoon: RunOnceScheduler;
 	private _mode: MemMode;
+	private _shareMem: boolean;
 	private _strategy: Memory;
-	private _persistSoon: RunOnceScheduler;
 
 	constructor(
-		mode: MemMode,
-		@IStorageService private readonly _storageService: IStorageService
+		@IStorageService private readonly _storageService: IStorageService,
+		@IConfigurationService private readonly _configService: IConfigurationService,
 	) {
-		this._persistSoon = new RunOnceScheduler(() => this._flush(), 3000);
-		this.setMode(mode);
+		super();
+
+		const update = () => {
+			const mode = this._configService.getValue<MemMode>('editor.suggestSelection');
+			const share = this._configService.getValue<boolean>('editor.suggest.shareSuggestSelections');
+			this._update(mode, share);
+		};
+
+		this._persistSoon = this._register(new RunOnceScheduler(() => this._saveState(), 3000));
+		this._register(_storageService.onWillSaveState(() => this._saveState()));
+
+		this._register(this._configService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('editor.suggestSelection') || e.affectsConfiguration('editor.suggest.shareSuggestSelections')) {
+				update();
+			}
+		}));
+		// this._register(this._storageService.onDidChangeStorage(e => {
+		// 	if (e.scope === StorageScope.GLOBAL && e.key.indexOf(this._storagePrefix) === 0) {
+		// 		update();
+		// 	}
+		// }));
+		update();
 	}
 
-	setMode(mode: MemMode): void {
-		if (this._mode === mode) {
+	private _update(mode: MemMode, shareMem: boolean): void {
+		if (this._mode === mode && this._shareMem === shareMem) {
 			return;
 		}
+		this._shareMem = shareMem;
 		this._mode = mode;
 		this._strategy = mode === 'recentlyUsedByPrefix' ? new PrefixMemory() : mode === 'recentlyUsed' ? new LRUMemory() : new NoMemory();
 
 		try {
-			const raw = this._storageService.get(`${this._storagePrefix}/${this._mode}`, StorageScope.WORKSPACE);
+			const scope = shareMem ? StorageScope.GLOBAL : StorageScope.WORKSPACE;
+			const raw = this._storageService.get(`${this._storagePrefix}/${this._mode}`, scope);
 			if (raw) {
 				this._strategy.fromJSON(JSON.parse(raw));
 			}
@@ -232,8 +263,20 @@ export class SuggestMemories {
 		return this._strategy.select(model, pos, items);
 	}
 
-	private _flush() {
+	private _saveState() {
 		const raw = JSON.stringify(this._strategy);
-		this._storageService.store(`${this._storagePrefix}/${this._mode}`, raw, StorageScope.WORKSPACE);
+		const scope = this._shareMem ? StorageScope.GLOBAL : StorageScope.WORKSPACE;
+		this._storageService.store(`${this._storagePrefix}/${this._mode}`, raw, scope);
 	}
 }
+
+
+export const ISuggestMemoryService = createDecorator<ISuggestMemoryService>('ISuggestMemories');
+
+export interface ISuggestMemoryService {
+	_serviceBrand: any;
+	memorize(model: ITextModel, pos: IPosition, item: ICompletionItem): void;
+	select(model: ITextModel, pos: IPosition, items: ICompletionItem[]): number;
+}
+
+registerSingleton(ISuggestMemoryService, SuggestMemoryService, true);

@@ -5,7 +5,7 @@
 
 import { basename } from 'path';
 import * as vscode from 'vscode';
-import { CachedNavTreeResponse } from './features/baseCodeLensProvider';
+import { CachedResponse } from './tsServer/cachedResponse';
 import { DiagnosticKind } from './features/diagnostics';
 import FileConfigurationManager from './features/fileConfigurationManager';
 import TypeScriptServiceClient from './typescriptServiceClient';
@@ -29,17 +29,15 @@ export default class LanguageProvider extends Disposable {
 		private readonly commandManager: CommandManager,
 		private readonly telemetryReporter: TelemetryReporter,
 		private readonly typingsStatus: TypingsStatus,
-		private readonly fileConfigurationManager: FileConfigurationManager
+		private readonly fileConfigurationManager: FileConfigurationManager,
+		private readonly onCompletionAccepted: (item: vscode.CompletionItem) => void,
 	) {
 		super();
 		vscode.workspace.onDidChangeConfiguration(this.configurationChanged, this, this._disposables);
 		this.configurationChanged();
 
-		client.onReady(async () => {
-			await this.registerProviders();
-		});
+		client.onReady(() => this.registerProviders());
 	}
-
 
 	@memoize
 	private get documentSelector(): vscode.DocumentFilter[] {
@@ -55,19 +53,19 @@ export default class LanguageProvider extends Disposable {
 	private async registerProviders(): Promise<void> {
 		const selector = this.documentSelector;
 
-		const cachedResponse = new CachedNavTreeResponse();
+		const cachedResponse = new CachedResponse();
 
-		this._register((await import('./features/completions')).register(selector, this.client, this.typingsStatus, this.fileConfigurationManager, this.commandManager));
+		this._register((await import('./features/completions')).register(selector, this.description.id, this.client, this.typingsStatus, this.fileConfigurationManager, this.commandManager, this.onCompletionAccepted));
 		this._register((await import('./features/definitions')).register(selector, this.client));
 		this._register((await import('./features/directiveCommentCompletions')).register(selector, this.client));
 		this._register((await import('./features/documentHighlight')).register(selector, this.client));
-		this._register((await import('./features/documentSymbol')).register(selector, this.client));
+		this._register((await import('./features/documentSymbol')).register(selector, this.client, cachedResponse));
 		this._register((await import('./features/folding')).register(selector, this.client));
 		this._register((await import('./features/formatting')).register(selector, this.description.id, this.client, this.fileConfigurationManager));
 		this._register((await import('./features/hover')).register(selector, this.client));
 		this._register((await import('./features/implementations')).register(selector, this.client));
 		this._register((await import('./features/implementationsCodeLens')).register(selector, this.description.id, this.client, cachedResponse));
-		this._register((await import('./features/jsDocCompletions')).register(selector, this.client, this.commandManager));
+		this._register((await import('./features/jsDocCompletions')).register(selector, this.client));
 		this._register((await import('./features/organizeImports')).register(selector, this.client, this.commandManager, this.fileConfigurationManager, this.telemetryReporter));
 		this._register((await import('./features/quickFix')).register(selector, this.client, this.fileConfigurationManager, this.commandManager, this.client.diagnosticsManager, this.telemetryReporter));
 		this._register((await import('./features/refactor')).register(selector, this.client, this.fileConfigurationManager, this.commandManager, this.telemetryReporter));
@@ -77,7 +75,6 @@ export default class LanguageProvider extends Disposable {
 		this._register((await import('./features/signatureHelp')).register(selector, this.client));
 		this._register((await import('./features/tagClosing')).register(selector, this.description.id, this.client));
 		this._register((await import('./features/typeDefinitions')).register(selector, this.client));
-		this._register((await import('./features/workspaceSymbols')).register(this.client, this.description.modeIds));
 	}
 
 	private configurationChanged(): void {

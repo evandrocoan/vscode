@@ -2,7 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import * as WinJS from 'vs/base/common/winjs.base';
 import * as Touch from 'vs/base/browser/touch';
@@ -556,6 +555,11 @@ export interface IController {
 	onKeyUp(tree: ITree, event: Keyboard.IKeyboardEvent): boolean;
 
 	/**
+	 * Called when a mouse middle button is pressed down on an element.
+	 */
+	onMouseMiddleClick?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
+
+	/**
 	 * Called when a mouse button is pressed down on an element.
 	 */
 	onMouseDown?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
@@ -566,12 +570,12 @@ export interface IController {
 	onMouseUp?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
 }
 
-export enum DragOverEffect {
+export const enum DragOverEffect {
 	COPY,
 	MOVE
 }
 
-export enum DragOverBubble {
+export const enum DragOverBubble {
 	BUBBLE_DOWN,
 	BUBBLE_UP
 }
@@ -727,7 +731,7 @@ export interface IActionProvider {
 	/**
 	 * Returns a promise of an array with the actions of the element that should show up in place right to the element in the tree.
 	 */
-	getActions(tree: ITree, element: any): WinJS.TPromise<IAction[]>;
+	getActions(tree: ITree, element: any): IAction[];
 
 	/**
 	 * Returns whether or not the element has secondary actions. These show up once the user has expanded the element's action bar.
@@ -737,7 +741,7 @@ export interface IActionProvider {
 	/**
 	 * Returns a promise of an array with the secondary actions of the element that should show up once the user has expanded the element's action bar.
 	 */
-	getSecondaryActions(tree: ITree, element: any): WinJS.TPromise<IAction[]>;
+	getSecondaryActions(tree: ITree, element: any): IAction[];
 
 	/**
 	 * Returns an action item to render an action.

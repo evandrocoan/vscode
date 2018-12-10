@@ -7,10 +7,10 @@ import * as vscode from 'vscode';
 import { ResourceMap } from '../utils/resourceMap';
 import { DiagnosticLanguage, allDiagnosticLangauges } from '../utils/languageDescription';
 
-export enum DiagnosticKind {
+export const enum DiagnosticKind {
 	Syntax,
 	Semantic,
-	Suggestion
+	Suggestion,
 }
 
 class FileDiagnostics {
@@ -97,7 +97,7 @@ class DiagnosticSettings {
 	public setValidate(language: DiagnosticLanguage, value: boolean): boolean {
 		return this.update(language, settings => ({
 			validate: value,
-			enableSuggestions: settings.enableSuggestions
+			enableSuggestions: settings.enableSuggestions,
 		}));
 	}
 

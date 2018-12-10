@@ -99,7 +99,7 @@
 			return;
 		}
 
-		const progress = event.target.body.scrollTop / event.target.body.clientHeight;
+		const progress = event.currentTarget.scrollY / event.target.body.clientHeight;
 		if (isNaN(progress)) {
 			return;
 		}
@@ -269,33 +269,13 @@
 			}
 
 			::-webkit-scrollbar-thumb {
-				background-color: rgba(121, 121, 121, 0.4);
+				background-color: var(--vscode-scrollbarSlider-background);
 			}
-			body.vscode-light::-webkit-scrollbar-thumb {
-				background-color: rgba(100, 100, 100, 0.4);
-			}
-			body.vscode-high-contrast::-webkit-scrollbar-thumb {
-				background-color: rgba(111, 195, 223, 0.3);
-			}
-
 			::-webkit-scrollbar-thumb:hover {
-				background-color: rgba(100, 100, 100, 0.7);
+				background-color: var(--vscode-scrollbarSlider-hoverBackground);
 			}
-			body.vscode-light::-webkit-scrollbar-thumb:hover {
-				background-color: rgba(100, 100, 100, 0.7);
-			}
-			body.vscode-high-contrast::-webkit-scrollbar-thumb:hover {
-				background-color: rgba(111, 195, 223, 0.8);
-			}
-
 			::-webkit-scrollbar-thumb:active {
-				background-color: rgba(85, 85, 85, 0.8);
-			}
-			body.vscode-light::-webkit-scrollbar-thumb:active {
-				background-color: rgba(0, 0, 0, 0.6);
-			}
-			body.vscode-high-contrast::-webkit-scrollbar-thumb:active {
-				background-color: rgba(111, 195, 223, 0.8);
+				background-color: var(--vscode-scrollbarSlider-activeBackground);
 			}
 			`;
 			if (newDocument.head.hasChildNodes()) {
@@ -308,22 +288,22 @@
 
 			const frame = getActiveFrame();
 
-			// keep current scrollTop around and use later
+			// keep current scrollY around and use later
 			var setInitialScrollPosition;
 			if (firstLoad) {
 				firstLoad = false;
-				setInitialScrollPosition = (body) => {
+				setInitialScrollPosition = (body, window) => {
 					if (!isNaN(initData.initialScrollProgress)) {
-						if (body.scrollTop === 0) {
-							body.scrollTop = body.clientHeight * initData.initialScrollProgress;
+						if (window.scrollY === 0) {
+							window.scroll(0, body.clientHeight * initData.initialScrollProgress);
 						}
 					}
 				};
 			} else {
-				const scrollY = frame && frame.contentDocument && frame.contentDocument.body ? frame.contentDocument.body.scrollTop : 0;
-				setInitialScrollPosition = (body) => {
-					if (body.scrollTop === 0) {
-						body.scrollTop = scrollY;
+				const scrollY = frame && frame.contentDocument && frame.contentDocument.body ? frame.contentWindow.scrollY : 0;
+				setInitialScrollPosition = (body, window) => {
+					if (window.scrollY === 0) {
+						window.scroll(0, scrollY);
 					}
 				};
 			}
@@ -345,6 +325,20 @@
 
 			// write new content onto iframe
 			newFrame.contentDocument.open('text/html', 'replace');
+			newFrame.contentWindow.addEventListener('focus', function () { ipcRenderer.sendToHost('did-focus'); });
+			newFrame.contentWindow.addEventListener('blur', function () { ipcRenderer.sendToHost('did-blur'); });
+			newFrame.contentWindow.addEventListener('keydown', function (e) {
+				ipcRenderer.sendToHost('did-keydown', {
+					key: e.key,
+					keyCode: e.keyCode,
+					code: e.code,
+					shiftKey: e.shiftKey,
+					altKey: e.altKey,
+					ctrlKey: e.ctrlKey,
+					metaKey: e.metaKey,
+					repeat: e.repeat
+				});
+			});
 			newFrame.contentWindow.onbeforeunload = () => {
 				if (isInDevelopmentMode) { // Allow reloads while developing a webview
 					ipcRenderer.sendToHost('do-reload');
@@ -359,11 +353,8 @@
 			var onLoad = (contentDocument, contentWindow) => {
 				if (contentDocument.body) {
 					// Workaround for https://github.com/Microsoft/vscode/issues/12865
-					// check new scrollTop and reset if neccessary
-					setInitialScrollPosition(contentDocument.body);
-
-					// Bubble out link clicks
-					contentDocument.body.addEventListener('click', handleInnerClick);
+					// check new scrollY and reset if neccessary
+					setInitialScrollPosition(contentDocument.body, contentWindow);
 				}
 
 				const newFrame = getPendingFrame();
@@ -400,6 +391,9 @@
 					onLoad(e.target, this);
 				}
 			});
+
+			// Bubble out link clicks
+			newFrame.contentWindow.addEventListener('click', handleInnerClick);
 
 			// set DOCTYPE for newDocument explicitly as DOMParser.parseFromString strips it off
 			// and DOCTYPE is needed in the iframe to ensure that the user agent stylesheet is correctly overridden

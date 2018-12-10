@@ -11,43 +11,40 @@ import { ITypeScriptServiceClient } from '../typescriptService';
 import API from '../utils/api';
 import { ConfigurationDependentRegistration, VersionDependentRegistration } from '../utils/dependentRegistration';
 import * as typeConverters from '../utils/typeConverters';
-import { CachedNavTreeResponse, ReferencesCodeLens, TypeScriptBaseCodeLensProvider } from './baseCodeLensProvider';
+import { ReferencesCodeLens, TypeScriptBaseCodeLensProvider, getSymbolRange } from './baseCodeLensProvider';
+import { CachedResponse } from '../tsServer/cachedResponse';
 
 const localize = nls.loadMessageBundle();
 
 class TypeScriptReferencesCodeLensProvider extends TypeScriptBaseCodeLensProvider {
 
-	public resolveCodeLens(inputCodeLens: vscode.CodeLens, token: vscode.CancellationToken): Promise<vscode.CodeLens> {
+	public async resolveCodeLens(inputCodeLens: vscode.CodeLens, token: vscode.CancellationToken): Promise<vscode.CodeLens> {
 		const codeLens = inputCodeLens as ReferencesCodeLens;
 		const args = typeConverters.Position.toFileLocationRequestArgs(codeLens.file, codeLens.range.start);
-		return this.client.execute('references', args, token).then(response => {
-			if (!response.body) {
-				throw codeLens;
-			}
-
-			const locations = response.body.refs
-				.map(reference =>
-					typeConverters.Location.fromTextSpan(this.client.toResource(reference.file), reference))
-				.filter(location =>
-					// Exclude original definition from references
-					!(location.uri.toString() === codeLens.document.toString() &&
-						location.range.start.isEqual(codeLens.range.start)));
-
-			codeLens.command = {
-				title: locations.length === 1
-					? localize('oneReferenceLabel', '1 reference')
-					: localize('manyReferenceLabel', '{0} references', locations.length),
-				command: locations.length ? 'editor.action.showReferences' : '',
-				arguments: [codeLens.document, codeLens.range.start, locations]
-			};
+		const response = await this.client.execute('references', args, token, /* lowPriority */ true);
+		if (response.type !== 'response' || !response.body) {
+			codeLens.command = response.type === 'cancelled'
+				? TypeScriptBaseCodeLensProvider.cancelledCommand
+				: TypeScriptBaseCodeLensProvider.errorCommand;
 			return codeLens;
-		}).catch(() => {
-			codeLens.command = {
-				title: localize('referenceErrorLabel', 'Could not determine references'),
-				command: ''
-			};
-			return codeLens;
-		});
+		}
+
+		const locations = response.body.refs
+			.map(reference =>
+				typeConverters.Location.fromTextSpan(this.client.toResource(reference.file), reference))
+			.filter(location =>
+				// Exclude original definition from references
+				!(location.uri.toString() === codeLens.document.toString() &&
+					location.range.start.isEqual(codeLens.range.start)));
+
+		codeLens.command = {
+			title: locations.length === 1
+				? localize('oneReferenceLabel', '1 reference')
+				: localize('manyReferenceLabel', '{0} references', locations.length),
+			command: locations.length ? 'editor.action.showReferences' : '',
+			arguments: [codeLens.document, codeLens.range.start, locations]
+		};
+		return codeLens;
 	}
 
 	protected extractSymbol(
@@ -56,7 +53,7 @@ class TypeScriptReferencesCodeLensProvider extends TypeScriptBaseCodeLensProvide
 		parent: Proto.NavigationTree | null
 	): vscode.Range | null {
 		if (parent && parent.kind === PConst.Kind.enum) {
-			return super.getSymbolRange(document, item);
+			return getSymbolRange(document, item);
 		}
 
 		switch (item.kind) {
@@ -84,7 +81,7 @@ class TypeScriptReferencesCodeLensProvider extends TypeScriptBaseCodeLensProvide
 			case PConst.Kind.interface:
 			case PConst.Kind.type:
 			case PConst.Kind.enum:
-				return super.getSymbolRange(document, item);
+				return getSymbolRange(document, item);
 		}
 
 		return null;
@@ -95,7 +92,7 @@ export function register(
 	selector: vscode.DocumentSelector,
 	modeId: string,
 	client: ITypeScriptServiceClient,
-	cachedResponse: CachedNavTreeResponse,
+	cachedResponse: CachedResponse<Proto.NavTreeResponse>,
 ) {
 	return new VersionDependentRegistration(client, API.v206, () =>
 		new ConfigurationDependentRegistration(modeId, 'referencesCodeLens.enabled', () => {

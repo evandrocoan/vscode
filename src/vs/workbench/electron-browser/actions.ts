@@ -3,19 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import 'vs/css!./media/actions';
 
-import URI from 'vs/base/common/uri';
-import { TPromise } from 'vs/base/common/winjs.base';
+import { URI } from 'vs/base/common/uri';
 import { Action } from 'vs/base/common/actions';
 import { IWindowService, IWindowsService, MenuBarVisibility } from 'vs/platform/windows/common/windows';
 import * as nls from 'vs/nls';
 import product from 'vs/platform/node/product';
-import * as errors from 'vs/base/common/errors';
 import { IWorkspaceContextService, WorkbenchState } from 'vs/platform/workspace/common/workspace';
-import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { IConfigurationService, ConfigurationTarget } from 'vs/platform/configuration/common/configuration';
 import { IWorkspaceConfigurationService } from 'vs/workbench/services/configuration/common/configuration';
 import { isMacintosh, isLinux, language } from 'vs/base/common/platform';
@@ -29,7 +24,7 @@ import { webFrame, shell } from 'electron';
 import { getBaseLabel } from 'vs/base/common/labels';
 import { IViewlet } from 'vs/workbench/common/viewlet';
 import { IPanel } from 'vs/workbench/common/panel';
-import { IWorkspaceIdentifier, getWorkspaceLabel, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier } from 'vs/platform/workspaces/common/workspaces';
+import { IWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, isWorkspaceIdentifier } from 'vs/platform/workspaces/common/workspaces';
 import { FileKind } from 'vs/platform/files/common/files';
 import { IssueType } from 'vs/platform/issue/common/issue';
 import { domEvent } from 'vs/base/browser/event';
@@ -40,12 +35,12 @@ import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { Context } from 'vs/platform/contextkey/browser/contextKeyService';
 import { IWorkbenchIssueService } from 'vs/workbench/services/issue/common/issue';
 import { INotificationService } from 'vs/platform/notification/common/notification';
-import { IUriLabelService } from 'vs/platform/uriLabel/common/uriLabel';
+import { ILabelService } from 'vs/platform/label/common/label';
 import { dirname } from 'vs/base/common/resources';
 import { IModelService } from 'vs/editor/common/services/modelService';
 import { IModeService } from 'vs/editor/common/services/modeService';
 import { IQuickInputService, IQuickPickItem, IQuickInputButton, IQuickPickSeparator, IKeyMods } from 'vs/platform/quickinput/common/quickInput';
-import { getIconClasses } from 'vs/workbench/browser/labels';
+import { getIconClasses } from 'vs/editor/common/services/getIconClasses';
 
 // --- actions
 
@@ -58,10 +53,10 @@ export class CloseCurrentWindowAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.windowService.closeWindow();
 
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -80,11 +75,11 @@ export class CloseWorkspaceAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		if (this.contextService.getWorkbenchState() === WorkbenchState.EMPTY) {
 			this.notificationService.info(nls.localize('noWorkspaceOpened', "There is currently no workspace opened in this instance to close."));
 
-			return TPromise.as(null);
+			return Promise.resolve(null);
 		}
 
 		return this.windowService.closeWorkspace();
@@ -104,7 +99,7 @@ export class NewWindowAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowsService.openNewWindow();
 	}
 }
@@ -118,7 +113,7 @@ export class ToggleFullScreenAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowService.toggleFullScreen();
 	}
 }
@@ -138,7 +133,7 @@ export class ToggleMenuBarAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		let currentVisibilityValue = this.configurationService.getValue<MenuBarVisibility>(ToggleMenuBarAction.menuBarVisibilityKey);
 		if (typeof currentVisibilityValue !== 'string') {
 			currentVisibilityValue = 'default';
@@ -153,7 +148,7 @@ export class ToggleMenuBarAction extends Action {
 
 		this.configurationService.updateValue(ToggleMenuBarAction.menuBarVisibilityKey, newVisibilityValue, ConfigurationTarget.USER);
 
-		return TPromise.as(null);
+		return Promise.resolve(null);
 	}
 }
 
@@ -166,7 +161,7 @@ export class ToggleDevToolsAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowsService.toggleDevTools();
 	}
 }
@@ -194,7 +189,7 @@ export abstract class BaseZoomAction extends Action {
 			browser.setZoomLevel(webFrame.getZoomLevel(), /*isTrusted*/false);
 		};
 
-		this.configurationService.updateValue(BaseZoomAction.SETTING_KEY, level).done(() => applyZoom());
+		this.configurationService.updateValue(BaseZoomAction.SETTING_KEY, level).then(() => applyZoom());
 	}
 }
 
@@ -211,10 +206,10 @@ export class ZoomInAction extends BaseZoomAction {
 		super(id, label, configurationService);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.setConfiguredZoomLevel(webFrame.getZoomLevel() + 1);
 
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -231,10 +226,10 @@ export class ZoomOutAction extends BaseZoomAction {
 		super(id, label, configurationService);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.setConfiguredZoomLevel(webFrame.getZoomLevel() - 1);
 
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -251,10 +246,10 @@ export class ZoomResetAction extends BaseZoomAction {
 		super(id, label, configurationService);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.setConfiguredZoomLevel(0);
 
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -271,7 +266,7 @@ export class ReloadWindowAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowService.reloadWindow().then(() => true);
 	}
 }
@@ -289,7 +284,7 @@ export class ReloadWindowWithExtensionsDisabledAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowService.reloadWindow({ _: [], 'disable-extensions': true }).then(() => true);
 	}
 }
@@ -317,7 +312,7 @@ export abstract class BaseSwitchWindow extends Action {
 
 	protected abstract isQuickNavigate(): boolean;
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		const currentWindowId = this.windowService.getCurrentWindowId();
 
 		return this.windowsService.getWindows().then(windows => {
@@ -349,7 +344,7 @@ export abstract class BaseSwitchWindow extends Action {
 			});
 		}).then(pick => {
 			if (pick) {
-				this.windowsService.showWindow(pick.payload).done(null, errors.onUnexpectedError);
+				this.windowsService.showWindow(pick.payload);
 			}
 		});
 	}
@@ -417,8 +412,7 @@ export abstract class BaseOpenRecentAction extends Action {
 		private windowsService: IWindowsService,
 		private quickInputService: IQuickInputService,
 		private contextService: IWorkspaceContextService,
-		private environmentService: IEnvironmentService,
-		private uriLabelService: IUriLabelService,
+		private labelService: ILabelService,
 		private keybindingService: IKeybindingService,
 		private modelService: IModelService,
 		private modeService: IModeService,
@@ -428,29 +422,29 @@ export abstract class BaseOpenRecentAction extends Action {
 
 	protected abstract isQuickNavigate(): boolean;
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowService.getRecentlyOpened()
 			.then(({ workspaces, files }) => this.openRecent(workspaces, files));
 	}
 
 	private openRecent(recentWorkspaces: (IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier)[], recentFiles: URI[]): void {
 
-		const toPick = (workspace: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | URI, fileKind: FileKind, environmentService: IEnvironmentService, uriLabelService: IUriLabelService, buttons: IQuickInputButton[]) => {
+		const toPick = (workspace: IWorkspaceIdentifier | ISingleFolderWorkspaceIdentifier | URI, fileKind: FileKind, labelService: ILabelService, buttons: IQuickInputButton[]) => {
 			let resource: URI;
 			let label: string;
 			let description: string;
 			if (isSingleFolderWorkspaceIdentifier(workspace) && fileKind !== FileKind.FILE) {
 				resource = workspace;
-				label = getWorkspaceLabel(workspace, environmentService, uriLabelService);
-				description = uriLabelService.getLabel(dirname(resource));
+				label = labelService.getWorkspaceLabel(workspace);
+				description = labelService.getUriLabel(dirname(resource));
 			} else if (isWorkspaceIdentifier(workspace)) {
 				resource = URI.file(workspace.configPath);
-				label = getWorkspaceLabel(workspace, environmentService, uriLabelService);
-				description = uriLabelService.getLabel(dirname(resource));
+				label = labelService.getWorkspaceLabel(workspace);
+				description = labelService.getUriLabel(dirname(resource));
 			} else {
 				resource = workspace;
 				label = getBaseLabel(workspace);
-				description = uriLabelService.getLabel(dirname(resource));
+				description = labelService.getUriLabel(dirname(resource));
 			}
 
 			return {
@@ -469,8 +463,8 @@ export abstract class BaseOpenRecentAction extends Action {
 			return this.windowService.openWindow([resource], { forceNewWindow, forceOpenWorkspaceAsFile: isFile });
 		};
 
-		const workspacePicks = recentWorkspaces.map(workspace => toPick(workspace, isSingleFolderWorkspaceIdentifier(workspace) ? FileKind.FOLDER : FileKind.ROOT_FOLDER, this.environmentService, this.uriLabelService, !this.isQuickNavigate() ? [this.removeFromRecentlyOpened] : void 0));
-		const filePicks = recentFiles.map(p => toPick(p, FileKind.FILE, this.environmentService, this.uriLabelService, !this.isQuickNavigate() ? [this.removeFromRecentlyOpened] : void 0));
+		const workspacePicks = recentWorkspaces.map(workspace => toPick(workspace, isSingleFolderWorkspaceIdentifier(workspace) ? FileKind.FOLDER : FileKind.ROOT_FOLDER, this.labelService, !this.isQuickNavigate() ? [this.removeFromRecentlyOpened] : void 0));
+		const filePicks = recentFiles.map(p => toPick(p, FileKind.FILE, this.labelService, !this.isQuickNavigate() ? [this.removeFromRecentlyOpened] : void 0));
 
 		// focus second entry if the first recent workspace is the current workspace
 		let autoFocusSecondEntry: boolean = recentWorkspaces[0] && this.contextService.isCurrentWorkspace(recentWorkspaces[0]);
@@ -487,9 +481,7 @@ export abstract class BaseOpenRecentAction extends Action {
 			onKeyMods: mods => keyMods = mods,
 			quickNavigate: this.isQuickNavigate() ? { keybindings: this.keybindingService.lookupKeybindings(this.id) } : void 0,
 			onDidTriggerItemButton: context => {
-				this.windowsService.removeFromRecentlyOpened([context.item.workspace]).then(() => {
-					context.removeItem();
-				}).then(null, errors.onUnexpectedError);
+				this.windowsService.removeFromRecentlyOpened([context.item.workspace]).then(() => context.removeItem());
 			}
 		})
 			.then(pick => {
@@ -497,8 +489,7 @@ export abstract class BaseOpenRecentAction extends Action {
 					return runPick(pick.resource, pick.fileKind === FileKind.FILE, keyMods);
 				}
 				return null;
-			})
-			.done(null, errors.onUnexpectedError);
+			});
 	}
 }
 
@@ -514,13 +505,12 @@ export class OpenRecentAction extends BaseOpenRecentAction {
 		@IWindowsService windowsService: IWindowsService,
 		@IQuickInputService quickInputService: IQuickInputService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
-		@IEnvironmentService environmentService: IEnvironmentService,
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IModelService modelService: IModelService,
 		@IModeService modeService: IModeService,
-		@IUriLabelService uriLabelService: IUriLabelService
+		@ILabelService labelService: ILabelService
 	) {
-		super(id, label, windowService, windowsService, quickInputService, contextService, environmentService, uriLabelService, keybindingService, modelService, modeService);
+		super(id, label, windowService, windowsService, quickInputService, contextService, labelService, keybindingService, modelService, modeService);
 	}
 
 	protected isQuickNavigate(): boolean {
@@ -540,13 +530,12 @@ export class QuickOpenRecentAction extends BaseOpenRecentAction {
 		@IWindowsService windowsService: IWindowsService,
 		@IQuickInputService quickInputService: IQuickInputService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
-		@IEnvironmentService environmentService: IEnvironmentService,
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IModelService modelService: IModelService,
 		@IModeService modeService: IModeService,
-		@IUriLabelService uriLabelService: IUriLabelService
+		@ILabelService labelService: ILabelService
 	) {
-		super(id, label, windowService, windowsService, quickInputService, contextService, environmentService, uriLabelService, keybindingService, modelService, modeService);
+		super(id, label, windowService, windowsService, quickInputService, contextService, labelService, keybindingService, modelService, modeService);
 	}
 
 	protected isQuickNavigate(): boolean {
@@ -566,7 +555,7 @@ export class OpenIssueReporterAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.issueService.openReporter()
 			.then(() => true);
 	}
@@ -584,7 +573,7 @@ export class OpenProcessExplorer extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.issueService.openProcessExplorer()
 			.then(() => true);
 	}
@@ -602,7 +591,7 @@ export class ReportPerformanceIssueUsingReporterAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		// TODO: Reporter should send timings table as well
 		return this.issueService.openReporter({ issueType: IssueType.PerformanceIssue })
 			.then(() => true);
@@ -625,7 +614,7 @@ export class KeybindingsReferenceAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		window.open(KeybindingsReferenceAction.URL);
 		return null;
 	}
@@ -646,7 +635,7 @@ export class OpenDocumentationUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		window.open(OpenDocumentationUrlAction.URL);
 		return null;
 	}
@@ -667,7 +656,7 @@ export class OpenIntroductoryVideosUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		window.open(OpenIntroductoryVideosUrlAction.URL);
 		return null;
 	}
@@ -688,7 +677,7 @@ export class OpenTipsAndTricksUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		window.open(OpenTipsAndTricksUrlAction.URL);
 		return null;
 	}
@@ -703,12 +692,12 @@ export class ToggleSharedProcessAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowsService.toggleSharedProcess();
 	}
 }
 
-export enum Direction {
+export const enum Direction {
 	Next,
 	Previous,
 }
@@ -726,7 +715,7 @@ export abstract class BaseNavigationAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<any> {
+	run(): Thenable<any> {
 		const isEditorFocus = this.partService.hasFocus(Parts.EDITOR_PART);
 		const isPanelFocus = this.partService.hasFocus(Parts.PANEL_PART);
 		const isSidebarFocus = this.partService.hasFocus(Parts.SIDEBAR_PART);
@@ -743,27 +732,27 @@ export abstract class BaseNavigationAction extends Action {
 		}
 
 		if (isSidebarFocus) {
-			return this.navigateOnSidebarFocus(isSidebarPositionLeft, isPanelPositionDown);
+			return Promise.resolve(this.navigateOnSidebarFocus(isSidebarPositionLeft, isPanelPositionDown));
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 
-	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet | IPanel> {
-		return TPromise.as(true);
+	protected navigateOnEditorFocus(_isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): Thenable<boolean | IViewlet | IPanel> {
+		return Promise.resolve(true);
 	}
 
-	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IPanel> {
-		return TPromise.as(true);
+	protected navigateOnPanelFocus(_isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): Thenable<boolean | IPanel> {
+		return Promise.resolve(true);
 	}
 
-	protected navigateOnSidebarFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet> {
-		return TPromise.as(true);
+	protected navigateOnSidebarFocus(_isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): boolean | IViewlet {
+		return true;
 	}
 
-	protected navigateToPanel(): TPromise<IPanel | boolean> {
+	protected navigateToPanel(): IPanel | boolean {
 		if (!this.partService.isVisible(Parts.PANEL_PART)) {
-			return TPromise.as(false);
+			return false;
 		}
 
 		const activePanelId = this.panelService.getActivePanel().getId();
@@ -771,9 +760,9 @@ export abstract class BaseNavigationAction extends Action {
 		return this.panelService.openPanel(activePanelId, true);
 	}
 
-	protected navigateToSidebar(): TPromise<IViewlet | boolean> {
+	protected navigateToSidebar(): Thenable<IViewlet | boolean> {
 		if (!this.partService.isVisible(Parts.SIDEBAR_PART)) {
-			return TPromise.as(false);
+			return Promise.resolve(false);
 		}
 
 		const activeViewletId = this.viewletService.getActiveViewlet().getId();
@@ -781,23 +770,23 @@ export abstract class BaseNavigationAction extends Action {
 		return this.viewletService.openViewlet(activeViewletId, true);
 	}
 
-	protected navigateAcrossEditorGroup(direction: GroupDirection): TPromise<boolean> {
+	protected navigateAcrossEditorGroup(direction: GroupDirection): boolean {
 		return this.doNavigateToEditorGroup({ direction });
 	}
 
-	protected navigateToEditorGroup(location: GroupLocation): TPromise<boolean> {
+	protected navigateToEditorGroup(location: GroupLocation): boolean {
 		return this.doNavigateToEditorGroup({ location });
 	}
 
-	private doNavigateToEditorGroup(scope: IFindGroupScope): TPromise<boolean> {
+	private doNavigateToEditorGroup(scope: IFindGroupScope): boolean {
 		const targetGroup = this.editorGroupService.findGroup(scope, this.editorGroupService.activeGroup);
 		if (targetGroup) {
 			targetGroup.focus();
 
-			return TPromise.as(true);
+			return true;
 		}
 
-		return TPromise.as(false);
+		return false;
 	}
 }
 
@@ -817,39 +806,37 @@ export class NavigateLeftAction extends BaseNavigationAction {
 		super(id, label, editorGroupService, panelService, partService, viewletService);
 	}
 
-	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet> {
-		return this.navigateAcrossEditorGroup(GroupDirection.LEFT)
-			.then(didNavigate => {
-				if (didNavigate) {
-					return TPromise.as(true);
-				}
+	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): Thenable<boolean | IViewlet> {
+		const didNavigate = this.navigateAcrossEditorGroup(GroupDirection.LEFT);
+		if (didNavigate) {
+			return Promise.resolve(true);
+		}
 
-				if (isSidebarPositionLeft) {
-					return this.navigateToSidebar();
-				}
+		if (isSidebarPositionLeft) {
+			return this.navigateToSidebar();
+		}
 
-				return TPromise.as(false);
-			});
+		return Promise.resolve(false);
 	}
 
-	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet> {
+	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): Thenable<boolean | IViewlet> {
 		if (isPanelPositionDown && isSidebarPositionLeft) {
 			return this.navigateToSidebar();
 		}
 
 		if (!isPanelPositionDown) {
-			return this.navigateToEditorGroup(GroupLocation.LAST);
+			return Promise.resolve(this.navigateToEditorGroup(GroupLocation.LAST));
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 
-	protected navigateOnSidebarFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean> {
+	protected navigateOnSidebarFocus(isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): boolean {
 		if (!isSidebarPositionLeft) {
 			return this.navigateToEditorGroup(GroupLocation.LAST);
 		}
 
-		return TPromise.as(false);
+		return false;
 	}
 }
 
@@ -869,39 +856,37 @@ export class NavigateRightAction extends BaseNavigationAction {
 		super(id, label, editorGroupService, panelService, partService, viewletService);
 	}
 
-	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet | IPanel> {
-		return this.navigateAcrossEditorGroup(GroupDirection.RIGHT)
-			.then(didNavigate => {
-				if (didNavigate) {
-					return TPromise.as(true);
-				}
+	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): Thenable<boolean | IViewlet | IPanel> {
+		const didNavigate = this.navigateAcrossEditorGroup(GroupDirection.RIGHT);
+		if (didNavigate) {
+			return Promise.resolve(true);
+		}
 
-				if (!isPanelPositionDown) {
-					return this.navigateToPanel();
-				}
+		if (!isPanelPositionDown) {
+			return Promise.resolve(this.navigateToPanel());
+		}
 
-				if (!isSidebarPositionLeft) {
-					return this.navigateToSidebar();
-				}
-
-				return TPromise.as(false);
-			});
-	}
-
-	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IViewlet> {
 		if (!isSidebarPositionLeft) {
 			return this.navigateToSidebar();
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 
-	protected navigateOnSidebarFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean> {
+	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): Thenable<boolean | IViewlet> {
+		if (!isSidebarPositionLeft) {
+			return this.navigateToSidebar();
+		}
+
+		return Promise.resolve(false);
+	}
+
+	protected navigateOnSidebarFocus(isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): boolean {
 		if (isSidebarPositionLeft) {
 			return this.navigateToEditorGroup(GroupLocation.FIRST);
 		}
 
-		return TPromise.as(false);
+		return false;
 	}
 }
 
@@ -921,16 +906,16 @@ export class NavigateUpAction extends BaseNavigationAction {
 		super(id, label, editorGroupService, panelService, partService, viewletService);
 	}
 
-	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean> {
-		return this.navigateAcrossEditorGroup(GroupDirection.UP);
+	protected navigateOnEditorFocus(_isSidebarPositionLeft: boolean, _isPanelPositionDown: boolean): Promise<boolean> {
+		return Promise.resolve(this.navigateAcrossEditorGroup(GroupDirection.UP));
 	}
 
-	protected navigateOnPanelFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean> {
+	protected navigateOnPanelFocus(_isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): Promise<boolean> {
 		if (isPanelPositionDown) {
-			return this.navigateToEditorGroup(GroupLocation.LAST);
+			return Promise.resolve(this.navigateToEditorGroup(GroupLocation.LAST));
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 }
 
@@ -950,19 +935,17 @@ export class NavigateDownAction extends BaseNavigationAction {
 		super(id, label, editorGroupService, panelService, partService, viewletService);
 	}
 
-	protected navigateOnEditorFocus(isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): TPromise<boolean | IPanel> {
-		return this.navigateAcrossEditorGroup(GroupDirection.DOWN)
-			.then(didNavigate => {
-				if (didNavigate) {
-					return TPromise.as(true);
-				}
+	protected navigateOnEditorFocus(_isSidebarPositionLeft: boolean, isPanelPositionDown: boolean): Promise<boolean | IPanel> {
+		const didNavigate = this.navigateAcrossEditorGroup(GroupDirection.DOWN);
+		if (didNavigate) {
+			return Promise.resolve(true);
+		}
 
-				if (isPanelPositionDown) {
-					return this.navigateToPanel();
-				}
+		if (isPanelPositionDown) {
+			return Promise.resolve(this.navigateToPanel());
+		}
 
-				return TPromise.as(false);
-			});
+		return Promise.resolve(false);
 	}
 }
 
@@ -1013,9 +996,9 @@ export class IncreaseViewSizeAction extends BaseResizeViewAction {
 		super(id, label, partService);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.resizePart(BaseResizeViewAction.RESIZE_INCREMENT);
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -1033,9 +1016,9 @@ export class DecreaseViewSizeAction extends BaseResizeViewAction {
 		super(id, label, partService);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		this.resizePart(-BaseResizeViewAction.RESIZE_INCREMENT);
-		return TPromise.as(true);
+		return Promise.resolve(true);
 	}
 }
 
@@ -1045,14 +1028,14 @@ export class NewWindowTab extends Action {
 	static readonly LABEL = nls.localize('newTab', "New Window Tab");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(NewWindowTab.ID, NewWindowTab.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.newWindowTab().then(() => true);
 	}
 }
@@ -1063,14 +1046,14 @@ export class ShowPreviousWindowTab extends Action {
 	static readonly LABEL = nls.localize('showPreviousTab', "Show Previous Window Tab");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(ShowPreviousWindowTab.ID, ShowPreviousWindowTab.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.showPreviousWindowTab().then(() => true);
 	}
 }
@@ -1081,14 +1064,14 @@ export class ShowNextWindowTab extends Action {
 	static readonly LABEL = nls.localize('showNextWindowTab', "Show Next Window Tab");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(ShowNextWindowTab.ID, ShowNextWindowTab.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.showNextWindowTab().then(() => true);
 	}
 }
@@ -1099,14 +1082,14 @@ export class MoveWindowTabToNewWindow extends Action {
 	static readonly LABEL = nls.localize('moveWindowTabToNewWindow', "Move Window Tab to New Window");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(MoveWindowTabToNewWindow.ID, MoveWindowTabToNewWindow.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.moveWindowTabToNewWindow().then(() => true);
 	}
 }
@@ -1117,14 +1100,14 @@ export class MergeAllWindowTabs extends Action {
 	static readonly LABEL = nls.localize('mergeAllWindowTabs', "Merge All Windows");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(MergeAllWindowTabs.ID, MergeAllWindowTabs.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.mergeAllWindowTabs().then(() => true);
 	}
 }
@@ -1135,14 +1118,14 @@ export class ToggleWindowTabsBar extends Action {
 	static readonly LABEL = nls.localize('toggleWindowTabsBar', "Toggle Window Tabs Bar");
 
 	constructor(
-		id: string,
-		label: string,
+		_id: string,
+		_label: string,
 		@IWindowsService private windowsService: IWindowsService
 	) {
 		super(ToggleWindowTabsBar.ID, ToggleWindowTabsBar.LABEL);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		return this.windowsService.toggleWindowTabsBar().then(() => true);
 	}
 }
@@ -1150,7 +1133,7 @@ export class ToggleWindowTabsBar extends Action {
 export class OpenTwitterUrlAction extends Action {
 
 	static readonly ID = 'workbench.action.openTwitterUrl';
-	static LABEL = nls.localize('openTwitterUrl', "Join us on Twitter", product.applicationName);
+	static LABEL = nls.localize('openTwitterUrl', "Join Us on Twitter", product.applicationName);
 
 	constructor(
 		id: string,
@@ -1159,12 +1142,12 @@ export class OpenTwitterUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		if (product.twitterUrl) {
-			return TPromise.as(shell.openExternal(product.twitterUrl));
+			return Promise.resolve(shell.openExternal(product.twitterUrl));
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 }
 
@@ -1180,12 +1163,12 @@ export class OpenRequestFeatureUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		if (product.requestFeatureUrl) {
-			return TPromise.as(shell.openExternal(product.requestFeatureUrl));
+			return Promise.resolve(shell.openExternal(product.requestFeatureUrl));
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 }
 
@@ -1201,17 +1184,17 @@ export class OpenLicenseUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		if (product.licenseUrl) {
 			if (language) {
 				const queryArgChar = product.licenseUrl.indexOf('?') > 0 ? '&' : '?';
-				return TPromise.as(shell.openExternal(`${product.licenseUrl}${queryArgChar}lang=${language}`));
+				return Promise.resolve(shell.openExternal(`${product.licenseUrl}${queryArgChar}lang=${language}`));
 			} else {
-				return TPromise.as(shell.openExternal(product.licenseUrl));
+				return Promise.resolve(shell.openExternal(product.licenseUrl));
 			}
 		}
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 }
 
@@ -1228,18 +1211,18 @@ export class OpenPrivacyStatementUrlAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<boolean> {
+	run(): Thenable<boolean> {
 		if (product.privacyStatementUrl) {
 			if (language) {
 				const queryArgChar = product.privacyStatementUrl.indexOf('?') > 0 ? '&' : '?';
-				return TPromise.as(shell.openExternal(`${product.privacyStatementUrl}${queryArgChar}lang=${language}`));
+				return Promise.resolve(shell.openExternal(`${product.privacyStatementUrl}${queryArgChar}lang=${language}`));
 			} else {
-				return TPromise.as(shell.openExternal(product.privacyStatementUrl));
+				return Promise.resolve(shell.openExternal(product.privacyStatementUrl));
 			}
 		}
 
 
-		return TPromise.as(false);
+		return Promise.resolve(false);
 	}
 }
 
@@ -1256,7 +1239,7 @@ export class ShowAboutDialogAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		return this.windowsService.openAboutDialog();
 	}
 }
@@ -1275,7 +1258,7 @@ export class InspectContextKeysAction extends Action {
 		super(id, label);
 	}
 
-	run(): TPromise<void> {
+	run(): Thenable<void> {
 		const disposables: IDisposable[] = [];
 
 		const stylesheet = createStyleSheet();
@@ -1317,6 +1300,6 @@ export class InspectContextKeysAction extends Action {
 			dispose(disposables);
 		}, null, disposables);
 
-		return TPromise.as(null);
+		return Promise.resolve(null);
 	}
 }

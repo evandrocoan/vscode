@@ -4,8 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { OS } from 'vs/base/common/platform';
-import URI from 'vs/base/common/uri';
-import { TPromise } from 'vs/base/common/winjs.base';
+import { URI } from 'vs/base/common/uri';
 import { ITextModelService } from 'vs/editor/common/services/resolverService';
 import * as nls from 'vs/nls';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -13,6 +12,8 @@ import { EditorInput, SideBySideEditorInput, Verbosity } from 'vs/workbench/comm
 import { ResourceEditorInput } from 'vs/workbench/common/editor/resourceEditorInput';
 import { IHashService } from 'vs/workbench/services/hash/common/hashService';
 import { KeybindingsEditorModel } from 'vs/workbench/services/preferences/common/keybindingsEditorModel';
+import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
+import { Settings2EditorModel } from 'vs/workbench/services/preferences/common/preferencesModels';
 
 export class PreferencesEditorInput extends SideBySideEditorInput {
 	public static readonly ID: string = 'workbench.editorinputs.preferencesEditorInput';
@@ -68,8 +69,8 @@ export class KeybindingsEditorInput extends EditorInput {
 		return nls.localize('keybindingsInputName', "Keyboard Shortcuts");
 	}
 
-	resolve(): TPromise<KeybindingsEditorModel> {
-		return TPromise.as(this.keybindingsModel);
+	resolve(): Thenable<KeybindingsEditorModel> {
+		return Promise.resolve(this.keybindingsModel);
 	}
 
 	matches(otherInput: any): boolean {
@@ -77,18 +78,40 @@ export class KeybindingsEditorInput extends EditorInput {
 	}
 }
 
-export class SettingsEditor2Input extends ResourceEditorInput {
+export class SettingsEditor2Input extends EditorInput {
 
 	public static readonly ID: string = 'workbench.input.settings2';
+	private readonly _settingsModel: Settings2EditorModel;
+	private resource: URI = URI.from({
+		scheme: 'vscode-settings',
+		path: `settingseditor`
+	});
 
-	constructor(defaultSettingsResource: URI,
-		@ITextModelService textModelResolverService: ITextModelService,
-		@IHashService hashService: IHashService
+	constructor(
+		@IPreferencesService _preferencesService: IPreferencesService,
 	) {
-		super(nls.localize('settingsEditor2InputName', "Settings (Preview)"), '', defaultSettingsResource, textModelResolverService, hashService);
+		super();
+
+		this._settingsModel = _preferencesService.createSettings2EditorModel();
+	}
+
+	matches(otherInput: any): boolean {
+		return otherInput instanceof SettingsEditor2Input;
 	}
 
 	getTypeId(): string {
 		return SettingsEditor2Input.ID;
+	}
+
+	getName(): string {
+		return nls.localize('settingsEditor2InputName', "Settings");
+	}
+
+	resolve(): Thenable<Settings2EditorModel> {
+		return Promise.resolve(this._settingsModel);
+	}
+
+	public getResource(): URI {
+		return this.resource;
 	}
 }

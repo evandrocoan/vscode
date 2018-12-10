@@ -33,7 +33,7 @@ let nonBuiltInLanguages = { // { fileNames, extensions }
 	"stylus": { extensions: ['styl'] },
 	"vala": { extensions: ['vala'] },
 	"todo": { fileNames: ['todo'] }
-}
+};
 
 function getCommitSha(repoId, repoPath) {
 	let commitInfo = 'https://api.github.com/repos/' + repoId + '/commits?path=' + repoPath;
@@ -309,6 +309,9 @@ exports.update = function () {
 					def2Content[def] = contents[match[2]];
 				}
 
+				if (def === '_default') {
+					continue; // no need to assign default color.
+				}
 				if (pattern[0] === '.') {
 					ext2Def[pattern.substr(1).toLowerCase()] = def;
 				} else {

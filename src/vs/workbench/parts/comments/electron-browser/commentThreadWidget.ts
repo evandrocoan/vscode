@@ -2,10 +2,8 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import * as nls from 'vs/nls';
-import { $ } from 'vs/base/browser/builder';
 import * as dom from 'vs/base/browser/dom';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
 import { Button } from 'vs/base/browser/ui/button/button';
@@ -14,6 +12,8 @@ import * as arrays from 'vs/base/common/arrays';
 import { Color } from 'vs/base/common/color';
 import { Emitter, Event } from 'vs/base/common/event';
 import { IDisposable } from 'vs/base/common/lifecycle';
+import * as platform from 'vs/base/common/platform';
+import * as strings from 'vs/base/common/strings';
 import { ICodeEditor, IEditorMouseEvent, MouseTargetType } from 'vs/editor/browser/editorBrowser';
 import * as modes from 'vs/editor/common/modes';
 import { peekViewBorder } from 'vs/editor/contrib/referenceSearch/referencesWidget';
@@ -24,8 +24,8 @@ import { CommentGlyphWidget } from 'vs/workbench/parts/comments/electron-browser
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IModelService } from 'vs/editor/common/services/modelService';
 import { SimpleCommentEditor } from './simpleCommentEditor';
-import URI from 'vs/base/common/uri';
-import { transparent, editorForeground, textLinkActiveForeground, textLinkForeground, focusBorder, textBlockQuoteBackground, textBlockQuoteBorder, contrastBorder, inputValidationErrorBorder, inputValidationErrorBackground } from 'vs/platform/theme/common/colorRegistry';
+import { URI } from 'vs/base/common/uri';
+import { transparent, editorForeground, textLinkActiveForeground, textLinkForeground, focusBorder, textBlockQuoteBackground, textBlockQuoteBorder, contrastBorder, inputValidationErrorBorder, inputValidationErrorBackground, inputValidationErrorForeground } from 'vs/platform/theme/common/colorRegistry';
 import { IModeService } from 'vs/editor/common/services/modeService';
 import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
 import { KeyCode } from 'vs/base/common/keyCodes';
@@ -35,73 +35,20 @@ import { IPosition } from 'vs/editor/common/core/position';
 import { IOpenerService } from 'vs/platform/opener/common/opener';
 import { MarkdownRenderer } from 'vs/editor/contrib/markdown/markdownRenderer';
 import { IMarginData } from 'vs/editor/browser/controller/mouseTarget';
-import { ModelDecorationOptions } from 'vs/editor/common/model/textModel';
+import { CommentNode } from 'vs/workbench/parts/comments/electron-browser/commentNode';
+import { IDialogService } from 'vs/platform/dialogs/common/dialogs';
+import { INotificationService } from 'vs/platform/notification/common/notification';
+import { ITextModel } from 'vs/editor/common/model';
 
 export const COMMENTEDITOR_DECORATION_KEY = 'commenteditordecoration';
-const EXPAND_ACTION_CLASS = 'expand-review-action octicon octicon-chevron-down';
-const COLLAPSE_ACTION_CLASS = 'expand-review-action octicon octicon-chevron-up';
+const COLLAPSE_ACTION_CLASS = 'expand-review-action octicon octicon-x';
 const COMMENT_SCHEME = 'comment';
 
-export class CommentNode {
-	private _domNode: HTMLElement;
-	private _body: HTMLElement;
-	private _md: HTMLElement;
-	private _clearTimeout: any;
-
-	public get domNode(): HTMLElement {
-		return this._domNode;
-	}
-
-	constructor(
-		public comment: modes.Comment,
-		private markdownRenderer: MarkdownRenderer,
-	) {
-		this._domNode = $('div.review-comment').getHTMLElement();
-		this._domNode.tabIndex = 0;
-		let avatar = $('div.avatar-container').appendTo(this._domNode).getHTMLElement();
-		let img = <HTMLImageElement>$('img.avatar').appendTo(avatar).getHTMLElement();
-		img.src = comment.gravatar;
-		let commentDetailsContainer = $('.review-comment-contents').appendTo(this._domNode).getHTMLElement();
-
-		let header = $('div').appendTo(commentDetailsContainer).getHTMLElement();
-		let author = $('strong.author').appendTo(header).getHTMLElement();
-		author.innerText = comment.userName;
-		this._body = $('div.comment-body').appendTo(commentDetailsContainer).getHTMLElement();
-		this._md = this.markdownRenderer.render(comment.body).element;
-		this._body.appendChild(this._md);
-
-		this._domNode.setAttribute('aria-label', `${comment.userName}, ${comment.body.value}`);
-		this._domNode.setAttribute('role', 'treeitem');
-		this._clearTimeout = null;
-	}
-
-	update(newComment: modes.Comment) {
-		if (newComment.body !== this.comment.body) {
-			this._body.removeChild(this._md);
-			this._md = this.markdownRenderer.render(newComment.body).element;
-			this._body.appendChild(this._md);
-		}
-
-		this.comment = newComment;
-	}
-
-	focus() {
-		this.domNode.focus();
-		if (!this._clearTimeout) {
-			dom.addClass(this.domNode, 'focus');
-			this._clearTimeout = setTimeout(() => {
-				dom.removeClass(this.domNode, 'focus');
-			}, 3000);
-		}
-	}
-}
-
 let INMEM_MODEL_ID = 0;
+
 export class ReviewZoneWidget extends ZoneWidget {
 	private _headElement: HTMLElement;
-	protected _primaryHeading: HTMLElement;
-	protected _secondaryHeading: HTMLElement;
-	protected _metaHeading: HTMLElement;
+	protected _headingLabel: HTMLElement;
 	protected _actionbarWidget: ActionBar;
 	private _bodyElement: HTMLElement;
 	private _commentEditor: ICodeEditor;
@@ -111,22 +58,30 @@ export class ReviewZoneWidget extends ZoneWidget {
 	private _reviewThreadReplyButton: HTMLElement;
 	private _resizeObserver: any;
 	private _onDidClose = new Emitter<ReviewZoneWidget>();
+	private _onDidCreateThread = new Emitter<ReviewZoneWidget>();
 	private _isCollapsed;
-	private _toggleAction: Action;
+	private _collapseAction: Action;
 	private _commentThread: modes.CommentThread;
 	private _commentGlyph: CommentGlyphWidget;
-	private _owner: number;
+	private _owner: string;
+	private _pendingComment: string;
+	private _draftMode: modes.DraftMode;
 	private _localToDispose: IDisposable[];
 	private _globalToDispose: IDisposable[];
 	private _markdownRenderer: MarkdownRenderer;
 	private _styleElement: HTMLStyleElement;
+	private _formActions: HTMLElement;
 	private _error: HTMLElement;
 
-	public get owner(): number {
+	public get owner(): string {
 		return this._owner;
 	}
 	public get commentThread(): modes.CommentThread {
 		return this._commentThread;
+	}
+
+	public get draftMode(): modes.DraftMode {
+		return this._draftMode;
 	}
 
 	constructor(
@@ -136,18 +91,25 @@ export class ReviewZoneWidget extends ZoneWidget {
 		private themeService: IThemeService,
 		private commentService: ICommentService,
 		private openerService: IOpenerService,
+		private dialogService: IDialogService,
+		private notificationService: INotificationService,
 		editor: ICodeEditor,
-		owner: number,
+		owner: string,
 		commentThread: modes.CommentThread,
+		pendingComment: string,
+		draftMode: modes.DraftMode,
 		options: IOptions = {}
 	) {
 		super(editor, options);
 		this._resizeObserver = null;
 		this._owner = owner;
 		this._commentThread = commentThread;
+		this._pendingComment = pendingComment;
+		this._draftMode = draftMode;
 		this._isCollapsed = commentThread.collapsibleState !== modes.CommentThreadCollapsibleState.Expanded;
 		this._globalToDispose = [];
 		this._localToDispose = [];
+		this._formActions = null;
 		this.create();
 
 		this._styleElement = dom.createStyleSheet(this.domNode);
@@ -166,6 +128,20 @@ export class ReviewZoneWidget extends ZoneWidget {
 		return this._onDidClose.event;
 	}
 
+	public get onDidCreateThread(): Event<ReviewZoneWidget> {
+		return this._onDidCreateThread.event;
+	}
+
+	public getPosition(): IPosition | undefined {
+		let position: IPosition = this.position;
+		if (position) {
+			return position;
+		}
+
+		position = this._commentGlyph.getPosition().position;
+		return position;
+	}
+
 	protected revealLine(lineNumber: number) {
 		// we don't do anything here as we always do the reveal ourselves.
 	}
@@ -175,8 +151,6 @@ export class ReviewZoneWidget extends ZoneWidget {
 			this.show({ lineNumber: this._commentThread.range.startLineNumber, column: 1 }, 2);
 		}
 
-		this._bodyElement.focus();
-
 		if (commentId) {
 			let height = this.editor.getLayoutInfo().height;
 			let matchedNode = this._commentElements.filter(commentNode => commentNode.comment.commentId === commentId);
@@ -185,7 +159,6 @@ export class ReviewZoneWidget extends ZoneWidget {
 				const commentCoords = dom.getDomNodePagePosition(matchedNode[0].domNode);
 
 				this.editor.setScrollTop(this.editor.getTopForLineNumber(this._commentThread.range.startLineNumber) - height / 2 + commentCoords.top - commentThreadCoords.top);
-				matchedNode[0].focus();
 				return;
 			}
 		}
@@ -193,55 +166,54 @@ export class ReviewZoneWidget extends ZoneWidget {
 		this.editor.revealRangeInCenter(this._commentThread.range);
 	}
 
+	public getPendingComment(): string {
+		if (this._commentEditor) {
+			let model = this._commentEditor.getModel();
+
+			if (model && model.getValueLength() > 0) { // checking length is cheap
+				return model.getValue();
+			}
+		}
+
+		return null;
+	}
+
 	protected _fillContainer(container: HTMLElement): void {
 		this.setCssClass('review-widget');
-		this._headElement = <HTMLDivElement>$('.head').getHTMLElement();
+		this._headElement = <HTMLDivElement>dom.$('.head');
 		container.appendChild(this._headElement);
 		this._fillHead(this._headElement);
 
-		this._bodyElement = <HTMLDivElement>$('.body').getHTMLElement();
+		this._bodyElement = <HTMLDivElement>dom.$('.body');
 		container.appendChild(this._bodyElement);
 	}
 
 	protected _fillHead(container: HTMLElement): void {
-		var titleElement = $('.review-title').
-			appendTo(this._headElement).
-			getHTMLElement();
+		var titleElement = dom.append(this._headElement, dom.$('.review-title'));
 
-		this._primaryHeading = $('span.filename').appendTo(titleElement).getHTMLElement();
-		this._secondaryHeading = $('span.dirname').appendTo(titleElement).getHTMLElement();
-		this._metaHeading = $('span.meta').appendTo(titleElement).getHTMLElement();
+		this._headingLabel = dom.append(titleElement, dom.$('span.filename'));
+		this.createThreadLabel();
 
-		if (this._commentThread.comments.length) {
-			this.createParticipantsLabel();
-		}
-
-		const actionsContainer = $('.review-actions').appendTo(this._headElement);
-		this._actionbarWidget = new ActionBar(actionsContainer.getHTMLElement(), {});
+		const actionsContainer = dom.append(this._headElement, dom.$('.review-actions'));
+		this._actionbarWidget = new ActionBar(actionsContainer, {});
 		this._disposables.push(this._actionbarWidget);
 
-		this._toggleAction = new Action('review.expand', nls.localize('label.collapse', "Collapse"), this._isCollapsed ? EXPAND_ACTION_CLASS : COLLAPSE_ACTION_CLASS, true, () => {
-			if (this._isCollapsed) {
-				this.show({ lineNumber: this._commentThread.range.startLineNumber, column: 1 }, 2);
-				this._toggleAction.label = nls.localize('label.collapse', "Collapse");
+		this._collapseAction = new Action('review.expand', nls.localize('label.collapse', "Collapse"), COLLAPSE_ACTION_CLASS, true, () => {
+			if (this._commentThread.comments.length === 0) {
+				this.dispose();
+				return null;
 			}
-			else {
-				if (this._commentThread.comments.length === 0) {
-					this.dispose();
-					return null;
-				}
-				this._isCollapsed = true;
-				this.hide();
-				this._toggleAction.label = nls.localize('label.expand', "Expand");
-			}
+
+			this._isCollapsed = true;
+			this.hide();
 			return null;
 		});
 
-		this._actionbarWidget.push(this._toggleAction, { label: false, icon: true });
+		this._actionbarWidget.push(this._collapseAction, { label: false, icon: true });
 	}
 
 	toggleExpand() {
-		this._toggleAction.run();
+		this._collapseAction.run();
 	}
 
 	update(commentThread: modes.CommentThread) {
@@ -268,7 +240,7 @@ export class ReviewZoneWidget extends ZoneWidget {
 			this._commentsElement.removeChild(commentElementsToDel[i].domNode);
 		}
 
-		let lastCommentElement: HTMLElement = null;
+		let lastCommentElement: HTMLElement | null = null;
 		let newCommentNodeList: CommentNode[] = [];
 		for (let i = newCommentsLen - 1; i >= 0; i--) {
 			let currentComment = commentThread.comments[i];
@@ -277,7 +249,8 @@ export class ReviewZoneWidget extends ZoneWidget {
 				lastCommentElement = oldCommentNode[0].domNode;
 				newCommentNodeList.unshift(oldCommentNode[0]);
 			} else {
-				let newElement = new CommentNode(currentComment, this._markdownRenderer);
+				const newElement = this.createNewCommentNode(currentComment);
+
 				newCommentNodeList.unshift(newElement);
 				if (lastCommentElement) {
 					this._commentsElement.insertBefore(newElement.domNode, lastCommentElement);
@@ -291,18 +264,25 @@ export class ReviewZoneWidget extends ZoneWidget {
 
 		this._commentThread = commentThread;
 		this._commentElements = newCommentNodeList;
-		let secondaryHeading = this._commentThread.comments.filter(arrays.uniqueFilter(comment => comment.userName)).map(comment => `@${comment.userName}`).join(', ');
-		$(this._secondaryHeading).safeInnerHtml(secondaryHeading);
+		this.createThreadLabel();
+	}
+
+	updateDraftMode(draftMode: modes.DraftMode) {
+		this._draftMode = draftMode;
+
+		if (this._formActions) {
+			let model = this._commentEditor.getModel();
+			dom.clearNode(this._formActions);
+			this.createCommentWidgetActions(this._formActions, model);
+		}
 	}
 
 	protected _doLayout(heightInPixel: number, widthInPixel: number): void {
-		this._commentEditor.layout({ height: (this._commentEditor.hasWidgetFocus() ? 5 : 1) * 18, width: widthInPixel - 42 /* margin */ });
+		this._commentEditor.layout({ height: (this._commentEditor.hasWidgetFocus() ? 5 : 1) * 18, width: widthInPixel - 54 /* margin 20px * 10 + scrollbar 14px*/ });
 	}
 
-	display(lineNumber: number, commentsOptions: ModelDecorationOptions) {
-		this._commentGlyph = new CommentGlyphWidget(this.editor, lineNumber, commentsOptions, () => {
-			this.toggleExpand();
-		});
+	display(lineNumber: number) {
+		this._commentGlyph = new CommentGlyphWidget(this.editor, lineNumber);
 
 		this._localToDispose.push(this.editor.onMouseDown(e => this.onEditorMouseDown(e)));
 		this._localToDispose.push(this.editor.onMouseUp(e => this.onEditorMouseUp(e)));
@@ -310,22 +290,23 @@ export class ReviewZoneWidget extends ZoneWidget {
 		this._headElement.style.height = `${headHeight}px`;
 		this._headElement.style.lineHeight = this._headElement.style.height;
 
-		this._commentsElement = $('div.comments-container').appendTo(this._bodyElement).getHTMLElement();
+		this._commentsElement = dom.append(this._bodyElement, dom.$('div.comments-container'));
 		this._commentsElement.setAttribute('role', 'presentation');
 
 		this._commentElements = [];
 		for (let i = 0; i < this._commentThread.comments.length; i++) {
-			let newCommentNode = new CommentNode(this._commentThread.comments[i], this._markdownRenderer);
+			const newCommentNode = this.createNewCommentNode(this._commentThread.comments[i]);
+
 			this._commentElements.push(newCommentNode);
 			this._commentsElement.appendChild(newCommentNode.domNode);
 		}
 
 		const hasExistingComments = this._commentThread.comments.length > 0;
-		this._commentForm = $('.comment-form').appendTo(this._bodyElement).getHTMLElement();
+		this._commentForm = dom.append(this._bodyElement, dom.$('.comment-form'));
 		this._commentEditor = this.instantiationService.createInstance(SimpleCommentEditor, this._commentForm, SimpleCommentEditor.getEditorOptions());
 		const modeId = hasExistingComments ? this._commentThread.threadId : ++INMEM_MODEL_ID;
 		const resource = URI.parse(`${COMMENT_SCHEME}:commentinput-${modeId}.md`);
-		const model = this.modelService.createModel('', this.modeService.getOrCreateModeByFilenameOrFirstLine(resource.path), resource, true);
+		const model = this.modelService.createModel(this._pendingComment || '', this.modeService.createByFilepathOrFirstLine(resource.path), resource, true);
 		this._localToDispose.push(model);
 		this._commentEditor.setModel(model);
 		this._localToDispose.push(this._commentEditor);
@@ -362,27 +343,10 @@ export class ReviewZoneWidget extends ZoneWidget {
 			}
 		}));
 
-		this._error = $('.validation-error.hidden').appendTo(this._commentForm).getHTMLElement();
+		this._error = dom.append(this._commentForm, dom.$('.validation-error.hidden'));
 
-		const formActions = $('.form-actions').appendTo(this._commentForm).getHTMLElement();
-
-		const button = new Button(formActions);
-		attachButtonStyler(button, this.themeService);
-		button.label = 'Add comment';
-
-		button.enabled = false;
-		this._localToDispose.push(this._commentEditor.onDidChangeModelContent(_ => {
-			if (this._commentEditor.getValue()) {
-				button.enabled = true;
-			} else {
-				button.enabled = false;
-			}
-		}));
-
-		button.onDidClick(async () => {
-			let lineNumber = this._commentGlyph.getPosition().position.lineNumber;
-			this.createComment(lineNumber);
-		});
+		this._formActions = dom.append(this._commentForm, dom.$('.form-actions'));
+		this.createCommentWidgetActions(this._formActions, model);
 
 		this._resizeObserver = new MutationObserver(this._refresh.bind(this));
 
@@ -400,15 +364,137 @@ export class ReviewZoneWidget extends ZoneWidget {
 		// If there are no existing comments, place focus on the text area. This must be done after show, which also moves focus.
 		if (this._commentThread.reply && !this._commentThread.comments.length) {
 			this._commentEditor.focus();
+		} else if (this._commentEditor.getModel().getValueLength() > 0) {
+			if (!dom.hasClass(this._commentForm, 'expand')) {
+				dom.addClass(this._commentForm, 'expand');
+			}
+			this._commentEditor.focus();
 		}
+	}
+
+	private createCommentWidgetActions(container: HTMLElement, model: ITextModel) {
+		const button = new Button(container);
+		attachButtonStyler(button, this.themeService);
+		button.label = 'Add comment';
+
+		button.enabled = model.getValueLength() > 0;
+		this._localToDispose.push(this._commentEditor.onDidChangeModelContent(_ => {
+			if (this._commentEditor.getValue()) {
+				button.enabled = true;
+			} else {
+				button.enabled = false;
+			}
+		}));
+
+		button.onDidClick(async () => {
+			let lineNumber = this._commentGlyph.getPosition().position.lineNumber;
+			this.createComment(lineNumber);
+		});
+
+		if (this._draftMode === modes.DraftMode.NotSupported) {
+			return;
+		}
+
+		switch (this._draftMode) {
+			case modes.DraftMode.InDraft:
+				const deleteDraftLabel = this.commentService.getDeleteDraftLabel(this._owner);
+				if (deleteDraftLabel) {
+					const deletedraftButton = new Button(container);
+					attachButtonStyler(deletedraftButton, this.themeService);
+					deletedraftButton.label = deleteDraftLabel;
+					deletedraftButton.enabled = true;
+
+					deletedraftButton.onDidClick(async () => {
+						await this.commentService.deleteDraft(this._owner);
+					});
+				}
+
+				const submitDraftLabel = this.commentService.getFinishDraftLabel(this._owner);
+				if (submitDraftLabel) {
+					const submitdraftButton = new Button(container);
+					attachButtonStyler(submitdraftButton, this.themeService);
+					submitdraftButton.label = this.commentService.getFinishDraftLabel(this._owner);
+					submitdraftButton.enabled = true;
+
+					submitdraftButton.onDidClick(async () => {
+						let lineNumber = this._commentGlyph.getPosition().position.lineNumber;
+						await this.createComment(lineNumber);
+						await this.commentService.finishDraft(this._owner);
+					});
+				}
+
+				break;
+			case modes.DraftMode.NotInDraft:
+				const startDraftLabel = this.commentService.getStartDraftLabel(this._owner);
+				if (startDraftLabel) {
+					const draftButton = new Button(container);
+					attachButtonStyler(draftButton, this.themeService);
+					draftButton.label = this.commentService.getStartDraftLabel(this._owner);
+
+					draftButton.enabled = model.getValueLength() > 0;
+					this._localToDispose.push(this._commentEditor.onDidChangeModelContent(_ => {
+						if (this._commentEditor.getValue()) {
+							draftButton.enabled = true;
+						} else {
+							draftButton.enabled = false;
+						}
+					}));
+
+					draftButton.onDidClick(async () => {
+						await this.commentService.startDraft(this._owner);
+						let lineNumber = this._commentGlyph.getPosition().position.lineNumber;
+						await this.createComment(lineNumber);
+					});
+				}
+
+				break;
+		}
+	}
+
+	private createNewCommentNode(comment: modes.Comment): CommentNode {
+		let newCommentNode = new CommentNode(
+			comment,
+			this.owner,
+			this.editor.getModel().uri,
+			this._markdownRenderer,
+			this.themeService,
+			this.instantiationService,
+			this.commentService,
+			this.modelService,
+			this.modeService,
+			this.dialogService,
+			this.notificationService);
+
+		this._disposables.push(newCommentNode);
+		this._disposables.push(newCommentNode.onDidDelete(deletedNode => {
+			const deletedNodeId = deletedNode.comment.commentId;
+			const deletedElementIndex = arrays.firstIndex(this._commentElements, commentNode => commentNode.comment.commentId === deletedNodeId);
+			if (deletedElementIndex > -1) {
+				this._commentElements.splice(deletedElementIndex, 1);
+			}
+
+			const deletedCommentIndex = arrays.firstIndex(this._commentThread.comments, comment => comment.commentId === deletedNodeId);
+			if (deletedCommentIndex > -1) {
+				this._commentThread.comments.splice(deletedCommentIndex, 1);
+			}
+
+			this._commentsElement.removeChild(deletedNode.domNode);
+			deletedNode.dispose();
+
+			if (this._commentThread.comments.length === 0) {
+				this.dispose();
+			}
+		}));
+
+		return newCommentNode;
 	}
 
 	private async createComment(lineNumber: number): Promise<void> {
 		try {
 			let newCommentThread;
+			const isReply = this._commentThread.threadId !== null;
 
-			if (this._commentThread.threadId) {
-				// reply
+			if (isReply) {
 				newCommentThread = await this.commentService.replyToCommentThread(
 					this._owner,
 					this.editor.getModel().uri,
@@ -426,12 +512,12 @@ export class ReviewZoneWidget extends ZoneWidget {
 
 				if (newCommentThread) {
 					this.createReplyButton();
-					this.createParticipantsLabel();
 				}
 			}
 
 			if (newCommentThread) {
 				this._commentEditor.setValue('');
+				this._pendingComment = '';
 				if (dom.hasClass(this._commentForm, 'expand')) {
 					dom.removeClass(this._commentForm, 'expand');
 				}
@@ -439,6 +525,10 @@ export class ReviewZoneWidget extends ZoneWidget {
 				this._error.textContent = '';
 				dom.addClass(this._error, 'hidden');
 				this.update(newCommentThread);
+
+				if (!isReply) {
+					this._onDidCreateThread.fire(this);
+				}
 			}
 		} catch (e) {
 			this._error.textContent = e.message
@@ -449,27 +539,33 @@ export class ReviewZoneWidget extends ZoneWidget {
 		}
 	}
 
-	createParticipantsLabel() {
-		const primaryHeading = 'Participants:';
-		$(this._primaryHeading).safeInnerHtml(primaryHeading);
-		this._primaryHeading.setAttribute('aria-label', primaryHeading);
+	private createThreadLabel() {
+		let label: string;
+		if (this._commentThread.comments.length) {
+			const participantsList = this._commentThread.comments.filter(arrays.uniqueFilter(comment => comment.userName)).map(comment => `@${comment.userName}`).join(', ');
+			label = nls.localize('commentThreadParticipants', "Participants: {0}", participantsList);
+		} else {
+			label = nls.localize('startThread', "Start discussion");
+		}
 
-		const secondaryHeading = this._commentThread.comments.filter(arrays.uniqueFilter(comment => comment.userName)).map(comment => `@${comment.userName}`).join(', ');
-		$(this._secondaryHeading).safeInnerHtml(secondaryHeading);
-		this._secondaryHeading.setAttribute('aria-label', secondaryHeading);
+		this._headingLabel.innerHTML = strings.escape(label);
+		this._headingLabel.setAttribute('aria-label', label);
 	}
 
-	createReplyButton() {
-		this._reviewThreadReplyButton = <HTMLButtonElement>$('button.review-thread-reply-button').appendTo(this._commentForm).getHTMLElement();
-		this._reviewThreadReplyButton.title = 'Reply...';
-		this._reviewThreadReplyButton.textContent = 'Reply...';
+	private expandReplyArea() {
+		if (!dom.hasClass(this._commentForm, 'expand')) {
+			dom.addClass(this._commentForm, 'expand');
+			this._commentEditor.focus();
+		}
+	}
+
+	private createReplyButton() {
+		this._reviewThreadReplyButton = <HTMLButtonElement>dom.append(this._commentForm, dom.$('button.review-thread-reply-button'));
+		this._reviewThreadReplyButton.title = nls.localize('reply', "Reply...");
+		this._reviewThreadReplyButton.textContent = nls.localize('reply', "Reply...");
 		// bind click/escape actions for reviewThreadReplyButton and textArea
-		this._reviewThreadReplyButton.onclick = () => {
-			if (!dom.hasClass(this._commentForm, 'expand')) {
-				dom.addClass(this._commentForm, 'expand');
-				this._commentEditor.focus();
-			}
-		};
+		this._localToDispose.push(dom.addDisposableListener(this._reviewThreadReplyButton, 'click', _ => this.expandReplyArea()));
+		this._localToDispose.push(dom.addDisposableListener(this._reviewThreadReplyButton, 'focus', _ => this.expandReplyArea()));
 
 		this._commentEditor.onDidBlurEditorWidget(() => {
 			if (this._commentEditor.getModel().getValueLength() === 0 && dom.hasClass(this._commentForm, 'expand')) {
@@ -496,7 +592,12 @@ export class ReviewZoneWidget extends ZoneWidget {
 		if (model) {
 			let valueLength = model.getValueLength();
 			const hasExistingComments = this._commentThread.comments.length > 0;
-			let placeholder = valueLength > 0 ? '' : (hasExistingComments ? 'Reply... (press Ctrl+Enter to submit)' : 'Type a new comment (press Ctrl+Enter to submit)');
+			let keybinding = platform.isMacintosh ? 'Cmd+Enter' : 'Ctrl+Enter';
+			let placeholder = valueLength > 0
+				? ''
+				: (hasExistingComments
+					? `Reply... (press ${keybinding} to submit)`
+					: `Type a new comment (press ${keybinding} to submit)`);
 			const decorations = [{
 				range: {
 					startLineNumber: 0,
@@ -577,7 +678,7 @@ export class ReviewZoneWidget extends ZoneWidget {
 				this.show({ lineNumber: lineNumber, column: 1 }, 2);
 			} else {
 				this.hide();
-				if (this._commentThread === null) {
+				if (this._commentThread === null || this._commentThread.threadId === null) {
 					this.dispose();
 				}
 			}
@@ -585,7 +686,7 @@ export class ReviewZoneWidget extends ZoneWidget {
 	}
 
 	private _applyTheme(theme: ITheme) {
-		let borderColor = theme.getColor(peekViewBorder) || Color.transparent;
+		const borderColor = theme.getColor(peekViewBorder) || Color.transparent;
 		this.style({
 			arrowColor: borderColor,
 			frameColor: borderColor
@@ -594,18 +695,18 @@ export class ReviewZoneWidget extends ZoneWidget {
 		const content: string[] = [];
 		const linkColor = theme.getColor(textLinkForeground);
 		if (linkColor) {
-			content.push(`.monaco-editor .review-widget .body .review-comment a { color: ${linkColor} }`);
+			content.push(`.monaco-editor .review-widget .body .comment-body a { color: ${linkColor} }`);
 		}
 
 		const linkActiveColor = theme.getColor(textLinkActiveForeground);
 		if (linkActiveColor) {
-			content.push(`.monaco-editor .review-widget .body .review-comment a:hover, a:active { color: ${linkActiveColor} }`);
+			content.push(`.monaco-editor .review-widget .body .comment-body a:hover, a:active { color: ${linkActiveColor} }`);
 		}
 
 		const focusColor = theme.getColor(focusBorder);
 		if (focusColor) {
-			content.push(`.monaco-editor .review-widget .body .review-comment a:focus { outline: 1px solid ${focusColor}; }`);
-			content.push(`.monaco-editor .review-widget .body .comment-form .monaco-editor.focused { outline: 1px solid ${focusColor}; }`);
+			content.push(`.monaco-editor .review-widget .body .comment-body a:focus { outline: 1px solid ${focusColor}; }`);
+			content.push(`.monaco-editor .review-widget .body .monaco-editor.focused { outline: 1px solid ${focusColor}; }`);
 		}
 
 		const blockQuoteBackground = theme.getColor(textBlockQuoteBackground);
@@ -621,17 +722,22 @@ export class ReviewZoneWidget extends ZoneWidget {
 		const hcBorder = theme.getColor(contrastBorder);
 		if (hcBorder) {
 			content.push(`.monaco-editor .review-widget .body .comment-form .review-thread-reply-button { outline-color: ${hcBorder}; }`);
-			content.push(`.monaco-editor .review-widget .body .comment-form .monaco-editor { outline: 1px solid ${hcBorder}; }`);
+			content.push(`.monaco-editor .review-widget .body .monaco-editor { outline: 1px solid ${hcBorder}; }`);
 		}
 
 		const errorBorder = theme.getColor(inputValidationErrorBorder);
 		if (errorBorder) {
-			content.push(`.monaco-editor .review-widget .body .comment-form .validation-error { border: 1px solid ${errorBorder}; }`);
+			content.push(`.monaco-editor .review-widget .validation-error { border: 1px solid ${errorBorder}; }`);
 		}
 
 		const errorBackground = theme.getColor(inputValidationErrorBackground);
 		if (errorBackground) {
-			content.push(`.monaco-editor .review-widget .body .comment-form .validation-error { background: ${errorBackground}; }`);
+			content.push(`.monaco-editor .review-widget .validation-error { background: ${errorBackground}; }`);
+		}
+
+		const errorForeground = theme.getColor(inputValidationErrorForeground);
+		if (errorForeground) {
+			content.push(`.monaco-editor .review-widget .body .comment-form .validation-error { color: ${errorForeground}; }`);
 		}
 
 		const fontInfo = this.editor.getConfiguration().fontInfo;

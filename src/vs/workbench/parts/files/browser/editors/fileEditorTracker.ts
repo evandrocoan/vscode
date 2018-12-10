@@ -2,10 +2,9 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import { IWorkbenchContribution } from 'vs/workbench/common/contributions';
-import URI from 'vs/base/common/uri';
+import { URI } from 'vs/base/common/uri';
 import * as resources from 'vs/base/common/resources';
 import { IEditorViewState } from 'vs/editor/common/editorCommon';
 import { toResource, SideBySideEditorInput, IWorkbenchEditorConfiguration } from 'vs/workbench/common/editor';
@@ -148,7 +147,7 @@ export class FileEditorTracker extends Disposable implements IWorkbenchContribut
 				// Do NOT close any opened editor that matches the resource path (either equal or being parent) of the
 				// resource we move to (movedTo). Otherwise we would close a resource that has been renamed to the same
 				// path but different casing.
-				if (movedTo && resources.isEqualOrParent(resource, movedTo, resources.hasToIgnoreCase(resource))) {
+				if (movedTo && resources.isEqualOrParent(resource, movedTo)) {
 					return;
 				}
 
@@ -156,7 +155,7 @@ export class FileEditorTracker extends Disposable implements IWorkbenchContribut
 				if (arg1 instanceof FileChangesEvent) {
 					matches = arg1.contains(resource, FileChangeType.DELETED);
 				} else {
-					matches = resources.isEqualOrParent(resource, arg1, resources.hasToIgnoreCase(resource));
+					matches = resources.isEqualOrParent(resource, arg1);
 				}
 
 				if (!matches) {
@@ -223,7 +222,7 @@ export class FileEditorTracker extends Disposable implements IWorkbenchContribut
 					const resource = editor.getResource();
 
 					// Update Editor if file (or any parent of the input) got renamed or moved
-					if (resources.isEqualOrParent(resource, oldResource, resources.hasToIgnoreCase(resource))) {
+					if (resources.isEqualOrParent(resource, oldResource)) {
 						let reopenFileResource: URI;
 						if (oldResource.toString() === resource.toString()) {
 							reopenFileResource = newResource; // file got moved
@@ -315,7 +314,7 @@ export class FileEditorTracker extends Disposable implements IWorkbenchContribut
 		// to have a size of 2 (1 running load and 1 queued load).
 		const queue = this.modelLoadQueue.queueFor(model.getResource());
 		if (queue.size <= 1) {
-			queue.queue(() => model.load().then(null, onUnexpectedError));
+			queue.queue(() => model.load().then<void>(null, onUnexpectedError));
 		}
 	}
 

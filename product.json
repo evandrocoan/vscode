@@ -21,6 +21,7 @@
 	"extensionAllowedProposedApi": [
 		"ms-vsliveshare.vsliveshare",
 		"ms-vscode.node-debug",
-		"ms-vscode.node-debug2"
+		"ms-vscode.node-debug2",
+		"ms-vscode.references-view"
 	]
 }

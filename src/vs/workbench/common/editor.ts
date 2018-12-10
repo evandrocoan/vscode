@@ -2,13 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import { TPromise } from 'vs/base/common/winjs.base';
 import { Event, Emitter, once } from 'vs/base/common/event';
 import * as objects from 'vs/base/common/objects';
 import * as types from 'vs/base/common/types';
-import URI from 'vs/base/common/uri';
+import { URI } from 'vs/base/common/uri';
 import { IDisposable, Disposable } from 'vs/base/common/lifecycle';
 import { IEditor as ICodeEditor, IEditorViewState, ScrollType, IDiffEditor } from 'vs/editor/common/editorCommon';
 import { IEditorModel, IEditorOptions, ITextEditorOptions, IBaseResourceInput } from 'vs/platform/editor/common/editor';
@@ -21,6 +20,7 @@ import { IEditorGroup } from 'vs/workbench/services/group/common/editorGroupsSer
 import { ICompositeControl } from 'vs/workbench/common/composite';
 import { ActionRunner, IAction } from 'vs/base/common/actions';
 
+export const ActiveEditorContext = new RawContextKey<string>('activeEditor', null);
 export const EditorsVisibleContext = new RawContextKey<boolean>('editorIsOpen', false);
 export const EditorGroupActiveEditorDirtyContext = new RawContextKey<boolean>('groupActiveEditorDirty', false);
 export const NoEditorsVisibleContext: ContextKeyExpr = EditorsVisibleContext.toNegated();
@@ -248,7 +248,7 @@ export interface IResourceSideBySideInput extends IBaseResourceInput {
 	detailResource: URI;
 }
 
-export enum Verbosity {
+export const enum Verbosity {
 	SHORT,
 	MEDIUM,
 	LONG
@@ -302,7 +302,7 @@ export interface IEditorInput extends IDisposable {
 	/**
 	 * Resolves the input.
 	 */
-	resolve(): TPromise<IEditorModel>;
+	resolve(): Thenable<IEditorModel>;
 
 	/**
 	 * Returns if this input is dirty or not.
@@ -403,7 +403,7 @@ export abstract class EditorInput extends Disposable implements IEditorInput {
 	 * Returns a type of EditorModel that represents the resolved input. Subclasses should
 	 * override to provide a meaningful model.
 	 */
-	abstract resolve(): TPromise<IEditorModel>;
+	abstract resolve(): Thenable<IEditorModel>;
 
 	/**
 	 * An editor that is dirty will be asked to be saved once it closes.
@@ -473,13 +473,13 @@ export abstract class EditorInput extends Disposable implements IEditorInput {
 	}
 }
 
-export enum ConfirmResult {
+export const enum ConfirmResult {
 	SAVE,
 	DONT_SAVE,
 	CANCEL
 }
 
-export enum EncodingMode {
+export const enum EncodingMode {
 
 	/**
 	 * Instructs the encoding support to encode the current input with the provided encoding
@@ -586,8 +586,8 @@ export class SideBySideEditorInput extends EditorInput {
 		this._register(this.master.onDidChangeLabel(() => this._onDidChangeLabel.fire()));
 	}
 
-	resolve(): TPromise<EditorModel> {
-		return TPromise.as(null);
+	resolve(): Thenable<EditorModel> {
+		return Promise.resolve(null);
 	}
 
 	getTypeId(): string {
@@ -637,8 +637,8 @@ export class EditorModel extends Disposable implements IEditorModel {
 	/**
 	 * Causes this model to load returning a promise when loading is completed.
 	 */
-	load(): TPromise<EditorModel> {
-		return TPromise.as(this);
+	load(): Thenable<EditorModel> {
+		return Promise.resolve(this);
 	}
 
 	/**
@@ -916,7 +916,7 @@ export class EditorCommandsContextActionRunner extends ActionRunner {
 		super();
 	}
 
-	run(action: IAction, context?: any): TPromise<void> {
+	run(action: IAction, context?: any): Thenable<void> {
 		return super.run(action, this.context);
 	}
 }
@@ -937,6 +937,7 @@ export interface IWorkbenchEditorConfiguration {
 
 export interface IWorkbenchEditorPartConfiguration {
 	showTabs?: boolean;
+	highlightModifiedTabs?: boolean;
 	tabCloseButton?: 'left' | 'right' | 'off';
 	tabSizing?: 'fit' | 'shrink';
 	showIcons?: boolean;
@@ -949,6 +950,7 @@ export interface IWorkbenchEditorPartConfiguration {
 	revealIfOpen?: boolean;
 	swipeToNavigate?: boolean;
 	labelFormat?: 'default' | 'short' | 'medium' | 'long';
+	restoreViewState?: boolean;
 }
 
 export interface IResourceOptions {
@@ -996,21 +998,21 @@ export function toResource(editor: IEditorInput, options?: IResourceOptions): UR
 	return null;
 }
 
-export enum CloseDirection {
+export const enum CloseDirection {
 	LEFT,
 	RIGHT
 }
 
 export interface IEditorMemento<T> {
 
-	saveState(group: IEditorGroup, resource: URI, state: T): void;
-	saveState(group: IEditorGroup, editor: EditorInput, state: T): void;
+	saveEditorState(group: IEditorGroup, resource: URI, state: T): void;
+	saveEditorState(group: IEditorGroup, editor: EditorInput, state: T): void;
 
-	loadState(group: IEditorGroup, resource: URI): T;
-	loadState(group: IEditorGroup, editor: EditorInput): T;
+	loadEditorState(group: IEditorGroup, resource: URI): T;
+	loadEditorState(group: IEditorGroup, editor: EditorInput): T;
 
-	clearState(resource: URI): void;
-	clearState(editor: EditorInput): void;
+	clearEditorState(resource: URI, group?: IEditorGroup): void;
+	clearEditorState(editor: EditorInput, group?: IEditorGroup): void;
 }
 
 class EditorInputFactoryRegistry implements IEditorInputFactoryRegistry {

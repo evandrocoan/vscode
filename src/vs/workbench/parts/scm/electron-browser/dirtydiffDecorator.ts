@@ -3,14 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import * as nls from 'vs/nls';
 
 import 'vs/css!./media/dirtydiffDecorator';
 import { ThrottledDelayer, always, first } from 'vs/base/common/async';
 import { IDisposable, dispose, toDisposable, Disposable, combinedDisposable } from 'vs/base/common/lifecycle';
-import { TPromise } from 'vs/base/common/winjs.base';
 import { Event, Emitter, anyEvent as anyEvent, filterEvent, once } from 'vs/base/common/event';
 import * as ext from 'vs/workbench/common/contributions';
 import { CodeEditorWidget } from 'vs/editor/browser/widget/codeEditorWidget';
@@ -19,7 +16,7 @@ import { ITextModelService } from 'vs/editor/common/services/resolverService';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { IEditorWorkerService } from 'vs/editor/common/services/editorWorkerService';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import URI from 'vs/base/common/uri';
+import { URI } from 'vs/base/common/uri';
 import { ISCMService, ISCMRepository } from 'vs/workbench/services/scm/common/scm';
 import { ModelDecorationOptions } from 'vs/editor/common/model/textModel';
 import { registerThemingParticipant, ITheme, ICssStyleCollector, themeColorFromId, IThemeService } from 'vs/platform/theme/common/themeService';
@@ -64,13 +61,13 @@ class DiffMenuItemActionItem extends MenuItemActionItem {
 		event.stopPropagation();
 
 		this.actionRunner.run(this._commandAction, this._context)
-			.done(undefined, err => this._notificationService.error(err));
+			.then(undefined, err => this._notificationService.error(err));
 	}
 }
 
 class DiffActionRunner extends ActionRunner {
 
-	runAction(action: IAction, context: any): TPromise<any> {
+	runAction(action: IAction, context: any): Thenable<any> {
 		if (action instanceof MenuItemAction) {
 			return action.run(...context);
 		}
@@ -138,8 +135,8 @@ class UIEditorAction extends Action {
 		this.editor = editor;
 	}
 
-	run(): TPromise<any> {
-		return TPromise.wrap(this.instantiationService.invokeFunction(accessor => this.action.run(accessor, this.editor, null)));
+	run(): Thenable<any> {
+		return Promise.resolve(this.instantiationService.invokeFunction(accessor => this.action.run(accessor, this.editor, null)));
 	}
 }
 
@@ -277,8 +274,17 @@ class DirtyDiffWidget extends PeekViewWidget {
 	}
 
 	protected _getActionBarOptions(): IActionBarOptions {
+		const actionRunner = new DiffActionRunner();
+
+		// close widget on successful action
+		actionRunner.onDidRun(e => {
+			if (!(e.action instanceof UIEditorAction) && !e.error) {
+				this.dispose();
+			}
+		});
+
 		return {
-			actionRunner: new DiffActionRunner(),
+			actionRunner,
 			actionItemProvider: action => this.getActionItem(action),
 			orientation: ActionsOrientation.HORIZONTAL_REVERSE
 		};
@@ -306,7 +312,8 @@ class DirtyDiffWidget extends PeekViewWidget {
 			fixedOverflowWidgets: true,
 			minimap: { enabled: false },
 			renderSideBySide: false,
-			readOnly: true
+			readOnly: true,
+			ignoreTrimWhitespace: false
 		};
 
 		this.diffEditor = this.instantiationService.createInstance(EmbeddedDiffEditorWidget, container, options, this.editor);
@@ -349,7 +356,7 @@ class DirtyDiffWidget extends PeekViewWidget {
 	}
 
 	private _applyTheme(theme: ITheme) {
-		let borderColor = theme.getColor(peekViewBorder) || Color.transparent;
+		const borderColor = theme.getColor(peekViewBorder) || Color.transparent;
 		this.style({
 			arrowColor: borderColor,
 			frameColor: borderColor,
@@ -469,7 +476,7 @@ export class MoveToPreviousChangeAction extends EditorAction {
 
 		const position = new Position(change.modifiedStartLineNumber, 1);
 		outerEditor.setPosition(position);
-		outerEditor.revealPosition(position);
+		outerEditor.revealPositionInCenter(position);
 	}
 }
 registerEditorAction(MoveToPreviousChangeAction);
@@ -511,7 +518,7 @@ export class MoveToNextChangeAction extends EditorAction {
 
 		const position = new Position(change.modifiedStartLineNumber, 1);
 		outerEditor.setPosition(position);
-		outerEditor.revealPosition(position);
+		outerEditor.revealPositionInCenter(position);
 	}
 }
 registerEditorAction(MoveToNextChangeAction);
@@ -712,7 +719,7 @@ export class DirtyDiffController implements IEditorContribution {
 		const gutterOffsetX = data.offsetX - offsetLeftInGutter;
 
 		// TODO@joao TODO@alex TODO@martin this is such that we don't collide with folding
-		if (gutterOffsetX < 0 || gutterOffsetX > 10) {
+		if (gutterOffsetX < -3 || gutterOffsetX > 6) { // dirty diff decoration on hover is 9px wide
 			return;
 		}
 
@@ -766,6 +773,20 @@ export class DirtyDiffController implements IEditorContribution {
 		}
 	}
 
+	getChanges(): IChange[] {
+		if (!this.modelRegistry) {
+			return [];
+		}
+
+		const model = this.modelRegistry.getModel(this.editor.getModel());
+
+		if (!model) {
+			return [];
+		}
+
+		return model.changes;
+	}
+
 	dispose(): void {
 		this.disposables = dispose(this.disposables);
 	}
@@ -796,9 +817,9 @@ export const overviewRulerDeletedForeground = registerColor('editorOverviewRuler
 
 class DirtyDiffDecorator {
 
-	static createDecoration(className: string, foregroundColor: string, options: { gutter: boolean, overview: boolean }): ModelDecorationOptions {
+	static createDecoration(className: string, foregroundColor: string, options: { gutter: boolean, overview: boolean, isWholeLine: boolean }): ModelDecorationOptions {
 		const decorationOptions: IModelDecorationOptions = {
-			isWholeLine: true,
+			isWholeLine: options.isWholeLine,
 		};
 
 		if (options.gutter) {
@@ -808,7 +829,6 @@ class DirtyDiffDecorator {
 		if (options.overview) {
 			decorationOptions.overviewRuler = {
 				color: themeColorFromId(foregroundColor),
-				darkColor: themeColorFromId(foregroundColor),
 				position: OverviewRulerLane.Left
 			};
 		}
@@ -830,11 +850,11 @@ class DirtyDiffDecorator {
 		const decorations = configurationService.getValue<string>('scm.diffDecorations');
 		const gutter = decorations === 'all' || decorations === 'gutter';
 		const overview = decorations === 'all' || decorations === 'overview';
-		const options = { gutter, overview };
+		const options = { gutter, overview, isWholeLine: true };
 
 		this.modifiedOptions = DirtyDiffDecorator.createDecoration('dirty-diff-modified', overviewRulerModifiedForeground, options);
 		this.addedOptions = DirtyDiffDecorator.createDecoration('dirty-diff-added', overviewRulerAddedForeground, options);
-		this.deletedOptions = DirtyDiffDecorator.createDecoration('dirty-diff-deleted', overviewRulerDeletedForeground, options);
+		this.deletedOptions = DirtyDiffDecorator.createDecoration('dirty-diff-deleted', overviewRulerDeletedForeground, { ...options, isWholeLine: false });
 
 		model.onDidChange(this.onDidChange, this, this.disposables);
 	}
@@ -857,8 +877,8 @@ class DirtyDiffDecorator {
 				case ChangeType.Delete:
 					return {
 						range: {
-							startLineNumber: startLineNumber, startColumn: 1,
-							endLineNumber: startLineNumber, endColumn: 1
+							startLineNumber: startLineNumber, startColumn: Number.MAX_VALUE,
+							endLineNumber: startLineNumber, endColumn: Number.MAX_VALUE
 						},
 						options: this.deletedOptions
 					};
@@ -917,8 +937,9 @@ export class DirtyDiffModel {
 	get modified(): ITextModel { return this._editorModel; }
 
 	private diffDelayer: ThrottledDelayer<IChange[]>;
-	private _originalURIPromise: TPromise<URI>;
+	private _originalURIPromise: Thenable<URI>;
 	private repositoryDisposables = new Set<IDisposable[]>();
+	private originalModelDisposables: IDisposable[] = [];
 	private disposables: IDisposable[] = [];
 
 	private _onDidChange = new Emitter<ISplice<IChange>[]>();
@@ -933,8 +954,7 @@ export class DirtyDiffModel {
 		private _editorModel: ITextModel,
 		@ISCMService private scmService: ISCMService,
 		@IEditorWorkerService private editorWorkerService: IEditorWorkerService,
-		@ITextModelService private textModelResolverService: ITextModelService,
-		@IConfigurationService private configurationService: IConfigurationService
+		@ITextModelService private textModelResolverService: ITextModelService
 	) {
 		this.diffDelayer = new ThrottledDelayer<IChange[]>(200);
 
@@ -960,9 +980,9 @@ export class DirtyDiffModel {
 		this.triggerDiff();
 	}
 
-	private triggerDiff(): TPromise<any> {
+	private triggerDiff(): Thenable<any> {
 		if (!this.diffDelayer) {
-			return TPromise.as(null);
+			return Promise.resolve(null);
 		}
 
 		return this.diffDelayer
@@ -985,61 +1005,65 @@ export class DirtyDiffModel {
 			});
 	}
 
-	private diff(): TPromise<IChange[]> {
+	private diff(): Thenable<IChange[]> {
 		return this.getOriginalURIPromise().then(originalURI => {
 			if (!this._editorModel || this._editorModel.isDisposed() || !originalURI) {
-				return TPromise.as([]); // disposed
+				return Promise.resolve([]); // disposed
 			}
 
 			if (!this.editorWorkerService.canComputeDirtyDiff(originalURI, this._editorModel.uri)) {
-				return TPromise.as([]); // Files too large
+				return Promise.resolve([]); // Files too large
 			}
 
-			const ignoreTrimWhitespace = this.configurationService.getValue<boolean>('diffEditor.ignoreTrimWhitespace');
-
-			return this.editorWorkerService.computeDirtyDiff(originalURI, this._editorModel.uri, ignoreTrimWhitespace);
+			return this.editorWorkerService.computeDirtyDiff(originalURI, this._editorModel.uri, false);
 		});
 	}
 
-	private getOriginalURIPromise(): TPromise<URI> {
+	private getOriginalURIPromise(): Thenable<URI> {
 		if (this._originalURIPromise) {
 			return this._originalURIPromise;
 		}
 
-		this._originalURIPromise = this.getOriginalResource()
-			.then(originalUri => {
+		this._originalURIPromise = this.getOriginalResource().then(originalUri => {
+			if (!this._editorModel) { // disposed
+				return null;
+			}
+
+			if (!originalUri) {
+				this._originalModel = null;
+				return null;
+			}
+
+			if (this._originalModel && this._originalModel.uri.toString() === originalUri.toString()) {
+				return originalUri;
+			}
+
+			return this.textModelResolverService.createModelReference(originalUri).then(ref => {
 				if (!this._editorModel) { // disposed
 					return null;
 				}
 
-				if (!originalUri) {
-					this._originalModel = null;
-					return null;
-				}
+				this._originalModel = ref.object.textEditorModel;
 
-				return this.textModelResolverService.createModelReference(originalUri)
-					.then(ref => {
-						if (!this._editorModel) { // disposed
-							return null;
-						}
+				const originalModelDisposables: IDisposable[] = [];
+				originalModelDisposables.push(ref);
+				originalModelDisposables.push(ref.object.textEditorModel.onDidChangeContent(() => this.triggerDiff()));
 
-						this._originalModel = ref.object.textEditorModel;
+				dispose(this.originalModelDisposables);
+				this.originalModelDisposables = originalModelDisposables;
 
-						this.disposables.push(ref);
-						this.disposables.push(ref.object.textEditorModel.onDidChangeContent(() => this.triggerDiff()));
-
-						return originalUri;
-					});
+				return originalUri;
 			});
+		});
 
 		return always(this._originalURIPromise, () => {
 			this._originalURIPromise = null;
 		});
 	}
 
-	private getOriginalResource(): TPromise<URI> {
+	private getOriginalResource(): Thenable<URI> {
 		if (!this._editorModel) {
-			return TPromise.as(null);
+			return Promise.resolve(null);
 		}
 
 		const uri = this._editorModel.uri;
@@ -1083,6 +1107,7 @@ export class DirtyDiffModel {
 	}
 
 	dispose(): void {
+		this.originalModelDisposables = dispose(this.originalModelDisposables);
 		this.disposables = dispose(this.disposables);
 
 		this._editorModel = null;

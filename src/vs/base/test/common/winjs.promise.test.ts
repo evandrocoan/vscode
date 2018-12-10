@@ -2,14 +2,12 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
-
 import * as assert from 'assert';
 import * as winjs from 'vs/base/common/winjs.base';
 
 suite('WinJS and ES6 Promises', function () {
 
-	test('Promise.resolve', function () {
+	test('Promise.resolve', () => {
 		let resolveTPromise;
 		const tPromise = new winjs.Promise((c, e) => {
 			resolveTPromise = c;
@@ -54,7 +52,7 @@ suite('WinJS and ES6 Promises', function () {
 		let p1 = winjs.Promise.wrap<number>(new Promise<number>(function (c, e) { c(1); }));
 		let thenFunc = p1.then.bind(p1);
 		setTimeout(() => {
-			thenFunc(() => { });
+			thenFunc(() => 0);
 		}, 0);
 	});
 
@@ -64,7 +62,7 @@ suite('WinJS and ES6 Promises', function () {
 		let thenFunc = p1.then.bind(p1);
 		setTimeout(() => {
 			c(1);
-			thenFunc(() => { });
+			thenFunc(() => 0);
 		}, 0);
 	});
 });

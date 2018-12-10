@@ -3,10 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
-import { TPromise } from 'vs/base/common/winjs.base';
-import URI, { UriComponents } from 'vs/base/common/uri';
+import { URI, UriComponents } from 'vs/base/common/uri';
 import { Event, Emitter, debounceEvent } from 'vs/base/common/event';
 import { assign } from 'vs/base/common/objects';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
@@ -15,6 +12,7 @@ import { ExtHostContext, MainThreadSCMShape, ExtHostSCMShape, SCMProviderFeature
 import { Command } from 'vs/editor/common/modes';
 import { extHostNamedCustomer } from 'vs/workbench/api/electron-browser/extHostCustomers';
 import { ISplice, Sequence } from 'vs/base/common/sequence';
+import { CancellationToken } from 'vs/base/common/cancellation';
 
 class MainThreadSCMResourceGroup implements ISCMResourceGroup {
 
@@ -73,7 +71,7 @@ class MainThreadSCMResource implements ISCMResource {
 		public decorations: ISCMResourceDecorations
 	) { }
 
-	open(): TPromise<void> {
+	open(): Thenable<void> {
 		return this.proxy.$executeResourceCommand(this.sourceControlHandle, this.groupHandle, this.handle);
 	}
 
@@ -124,6 +122,9 @@ class MainThreadSCMProvider implements ISCMProvider {
 	private _onDidChangeCommitTemplate = new Emitter<string>();
 	get onDidChangeCommitTemplate(): Event<string> { return this._onDidChangeCommitTemplate.event; }
 
+	private _onDidChangeStatusBarCommands = new Emitter<Command[]>();
+	get onDidChangeStatusBarCommands(): Event<Command[]> { return this._onDidChangeStatusBarCommands.event; }
+
 	private _onDidChange = new Emitter<void>();
 	get onDidChange(): Event<void> { return this._onDidChange.event; }
 
@@ -142,6 +143,10 @@ class MainThreadSCMProvider implements ISCMProvider {
 
 		if (typeof features.commitTemplate !== 'undefined') {
 			this._onDidChangeCommitTemplate.fire(this.commitTemplate);
+		}
+
+		if (typeof features.statusBarCommands !== 'undefined') {
+			this._onDidChangeStatusBarCommands.fire(this.statusBarCommands);
 		}
 	}
 
@@ -236,13 +241,13 @@ class MainThreadSCMProvider implements ISCMProvider {
 		this.groups.splice(this.groups.elements.indexOf(group), 1);
 	}
 
-	getOriginalResource(uri: URI): TPromise<URI> {
+	async getOriginalResource(uri: URI): Promise<URI> {
 		if (!this.features.hasQuickDiffProvider) {
-			return TPromise.as(null);
+			return null;
 		}
 
-		return this.proxy.$provideOriginalResource(this.handle, uri)
-			.then(result => result && URI.revive(result));
+		const result = await this.proxy.$provideOriginalResource(this.handle, uri, CancellationToken.None);
+		return result && URI.revive(result);
 	}
 
 	toJSON(): any {
@@ -396,6 +401,16 @@ export class MainThreadSCM implements MainThreadSCMShape {
 		repository.input.placeholder = placeholder;
 	}
 
+	$setInputBoxVisibility(sourceControlHandle: number, visible: boolean): void {
+		const repository = this._repositories[sourceControlHandle];
+
+		if (!repository) {
+			return;
+		}
+
+		repository.input.visible = visible;
+	}
+
 	$setValidationProviderIsEnabled(sourceControlHandle: number, enabled: boolean): void {
 		const repository = this._repositories[sourceControlHandle];
 
@@ -404,20 +419,12 @@ export class MainThreadSCM implements MainThreadSCMShape {
 		}
 
 		if (enabled) {
-			repository.input.validateInput = (value, pos): TPromise<IInputValidation | undefined> => {
-				return this._proxy.$validateInput(sourceControlHandle, value, pos).then(result => {
-					if (!result) {
-						return undefined;
-					}
-
-					return {
-						message: result[0],
-						type: result[1]
-					};
-				});
+			repository.input.validateInput = async (value, pos): Promise<IInputValidation | undefined> => {
+				const result = await this._proxy.$validateInput(sourceControlHandle, value, pos);
+				return result && { message: result[0], type: result[1] };
 			};
 		} else {
-			repository.input.validateInput = () => TPromise.as(undefined);
+			repository.input.validateInput = async () => undefined;
 		}
 	}
 

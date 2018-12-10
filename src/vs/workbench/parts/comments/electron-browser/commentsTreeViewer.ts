@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from 'vs/base/browser/dom';
+import * as nls from 'vs/nls';
 import { renderMarkdown } from 'vs/base/browser/htmlContentRenderer';
 import { onUnexpectedError } from 'vs/base/common/errors';
 import { Disposable } from 'vs/base/common/lifecycle';
-import URI from 'vs/base/common/uri';
-import { Promise, TPromise } from 'vs/base/common/winjs.base';
+import { URI } from 'vs/base/common/uri';
 import { IDataSource, IFilter, IRenderer as ITreeRenderer, ITree } from 'vs/base/parts/tree/browser/tree';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IOpenerService } from 'vs/platform/opener/common/opener';
@@ -33,21 +33,21 @@ export class CommentsDataSource implements IDataSource {
 		return element instanceof CommentsModel || element instanceof ResourceWithCommentThreads || (element instanceof CommentNode && !!element.replies.length);
 	}
 
-	public getChildren(tree: ITree, element: any): Promise {
+	public getChildren(tree: ITree, element: any): Promise<ResourceWithCommentThreads[] | CommentNode[]> {
 		if (element instanceof CommentsModel) {
-			return Promise.as(element.resourceCommentThreads);
+			return Promise.resolve(element.resourceCommentThreads);
 		}
 		if (element instanceof ResourceWithCommentThreads) {
-			return Promise.as(element.commentThreads);
+			return Promise.resolve(element.commentThreads);
 		}
 		if (element instanceof CommentNode) {
-			return Promise.as(element.replies);
+			return Promise.resolve(element.replies);
 		}
 		return null;
 	}
 
-	public getParent(tree: ITree, element: any): Promise {
-		return TPromise.as(null);
+	public getParent(tree: ITree, element: any): Promise<void> {
+		return Promise.resolve(null);
 	}
 
 	public shouldAutoexpand(tree: ITree, element: any): boolean {
@@ -150,11 +150,27 @@ export class CommentsModelRenderer implements ITreeRenderer {
 			inline: true,
 			actionHandler: {
 				callback: (content) => {
-					this.openerService.open(URI.parse(content)).then(void 0, onUnexpectedError);
+					let uri: URI;
+					try {
+						uri = URI.parse(content);
+					} catch (err) {
+						// ignore
+					}
+					if (uri) {
+						this.openerService.open(uri).catch(onUnexpectedError);
+					}
 				},
 				disposeables: templateData.disposables
 			}
 		});
+
+		const images = renderedComment.getElementsByTagName('img');
+		for (let i = 0; i < images.length; i++) {
+			const image = images[i];
+			const textDescription = dom.$('');
+			textDescription.textContent = image.alt ? nls.localize('imageWithLabel', "Image: {0}", image.alt) : nls.localize('image', "Image");
+			image.parentNode.replaceChild(textDescription, image);
+		}
 
 		templateData.commentText.appendChild(renderedComment);
 	}

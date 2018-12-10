@@ -2,22 +2,19 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import { TPromise } from 'vs/base/common/winjs.base';
-import * as nls from 'vs/nls';
-import URI from 'vs/base/common/uri';
 import { Action } from 'vs/base/common/actions';
-import { IDisposable, dispose } from 'vs/base/common/lifecycle';
-import { IModeService } from 'vs/editor/common/services/modeService';
-import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
-import { IWorkspaceContextService, WorkbenchState, IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
-import { ICommandService } from 'vs/platform/commands/common/commands';
-import { PICK_WORKSPACE_FOLDER_COMMAND_ID } from 'vs/workbench/browser/actions/workspaceCommands';
-import { IQuickInputService, IQuickPickItem } from 'vs/platform/quickinput/common/quickInput';
-import { getIconClasses } from 'vs/workbench/browser/labels';
+import { dispose, IDisposable } from 'vs/base/common/lifecycle';
+import { URI } from 'vs/base/common/uri';
+import { getIconClasses } from 'vs/editor/common/services/getIconClasses';
 import { IModelService } from 'vs/editor/common/services/modelService';
-import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { IModeService } from 'vs/editor/common/services/modeService';
+import * as nls from 'vs/nls';
+import { ICommandService } from 'vs/platform/commands/common/commands';
+import { IQuickInputService, IQuickPickItem } from 'vs/platform/quickinput/common/quickInput';
+import { IWorkspaceContextService, IWorkspaceFolder, WorkbenchState } from 'vs/platform/workspace/common/workspace';
+import { PICK_WORKSPACE_FOLDER_COMMAND_ID } from 'vs/workbench/browser/actions/workspaceCommands';
+import { IPreferencesService } from 'vs/workbench/services/preferences/common/preferences';
 
 export class OpenRawDefaultSettingsAction extends Action {
 
@@ -32,7 +29,7 @@ export class OpenRawDefaultSettingsAction extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openRawDefaultSettings();
 	}
 }
@@ -50,11 +47,10 @@ export class OpenSettings2Action extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openSettings(false);
 	}
 }
-
 
 export class OpenSettingsAction extends Action {
 
@@ -64,15 +60,13 @@ export class OpenSettingsAction extends Action {
 	constructor(
 		id: string,
 		label: string,
-		@IPreferencesService private preferencesService: IPreferencesService,
-		@IConfigurationService private configurationService: IConfigurationService,
+		@IPreferencesService private preferencesService: IPreferencesService
 	) {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
-		const jsonEditorPreferred = this.configurationService.getValue('workbench.settings.editor') === 'json';
-		return this.preferencesService.openSettings(jsonEditorPreferred);
+	public run(event?: any): Thenable<any> {
+		return this.preferencesService.openSettings();
 	}
 }
 
@@ -89,7 +83,7 @@ export class OpenSettingsJsonAction extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openSettings(true);
 	}
 }
@@ -103,14 +97,12 @@ export class OpenGlobalSettingsAction extends Action {
 		id: string,
 		label: string,
 		@IPreferencesService private preferencesService: IPreferencesService,
-		@IConfigurationService private configurationService: IConfigurationService
 	) {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
-		const jsonEditorPreferred = this.configurationService.getValue('workbench.settings.editor') === 'json';
-		return this.preferencesService.openGlobalSettings(jsonEditorPreferred);
+	public run(event?: any): Thenable<any> {
+		return this.preferencesService.openGlobalSettings();
 	}
 }
 
@@ -127,7 +119,7 @@ export class OpenGlobalKeybindingsAction extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openGlobalKeybindingSettings(false);
 	}
 }
@@ -135,7 +127,7 @@ export class OpenGlobalKeybindingsAction extends Action {
 export class OpenGlobalKeybindingsFileAction extends Action {
 
 	public static readonly ID = 'workbench.action.openGlobalKeybindingsFile';
-	public static readonly LABEL = nls.localize('openGlobalKeybindingsFile', "Open Keyboard Shortcuts File");
+	public static readonly LABEL = nls.localize('openGlobalKeybindingsFile', "Open Keyboard Shortcuts (JSON)");
 
 	constructor(
 		id: string,
@@ -145,7 +137,7 @@ export class OpenGlobalKeybindingsFileAction extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openGlobalKeybindingSettings(true);
 	}
 }
@@ -153,7 +145,7 @@ export class OpenGlobalKeybindingsFileAction extends Action {
 export class OpenDefaultKeybindingsFileAction extends Action {
 
 	public static readonly ID = 'workbench.action.openDefaultKeybindingsFile';
-	public static readonly LABEL = nls.localize('openDefaultKeybindingsFile', "Open Default Keyboard Shortcuts File");
+	public static readonly LABEL = nls.localize('openDefaultKeybindingsFile', "Open Default Keyboard Shortcuts (JSON)");
 
 	constructor(
 		id: string,
@@ -163,7 +155,7 @@ export class OpenDefaultKeybindingsFileAction extends Action {
 		super(id, label);
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any): Thenable<any> {
 		return this.preferencesService.openDefaultKeybindingsFile();
 	}
 }
@@ -179,8 +171,7 @@ export class OpenWorkspaceSettingsAction extends Action {
 		id: string,
 		label: string,
 		@IPreferencesService private preferencesService: IPreferencesService,
-		@IConfigurationService private configurationService: IConfigurationService,
-		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService
+		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService,
 	) {
 		super(id, label);
 		this.update();
@@ -191,9 +182,8 @@ export class OpenWorkspaceSettingsAction extends Action {
 		this.enabled = this.workspaceContextService.getWorkbenchState() !== WorkbenchState.EMPTY;
 	}
 
-	public run(event?: any): TPromise<any> {
-		const jsonEditorPreferred = this.configurationService.getValue('workbench.settings.editor') === 'json';
-		return this.preferencesService.openWorkspaceSettings(jsonEditorPreferred);
+	public run(event?: any): Thenable<any> {
+		return this.preferencesService.openWorkspaceSettings();
 	}
 
 	public dispose(): void {
@@ -216,9 +206,8 @@ export class OpenFolderSettingsAction extends Action {
 		id: string,
 		label: string,
 		@IWorkspaceContextService private workspaceContextService: IWorkspaceContextService,
-		@IConfigurationService private configurationService: IConfigurationService,
 		@IPreferencesService private preferencesService: IPreferencesService,
-		@ICommandService private commandService: ICommandService
+		@ICommandService private commandService: ICommandService,
 	) {
 		super(id, label);
 		this.update();
@@ -230,12 +219,11 @@ export class OpenFolderSettingsAction extends Action {
 		this.enabled = this.workspaceContextService.getWorkbenchState() === WorkbenchState.WORKSPACE && this.workspaceContextService.getWorkspace().folders.length > 0;
 	}
 
-	public run(): TPromise<any> {
+	public run(): Thenable<any> {
 		return this.commandService.executeCommand<IWorkspaceFolder>(PICK_WORKSPACE_FOLDER_COMMAND_ID)
 			.then(workspaceFolder => {
 				if (workspaceFolder) {
-					const jsonEditorPreferred = this.configurationService.getValue('workbench.settings.editor') === 'json';
-					return this.preferencesService.openFolderSettings(workspaceFolder.uri, jsonEditorPreferred);
+					return this.preferencesService.openFolderSettings(workspaceFolder.uri);
 				}
 
 				return null;
@@ -264,7 +252,7 @@ export class ConfigureLanguageBasedSettingsAction extends Action {
 		super(id, label);
 	}
 
-	public run(): TPromise<any> {
+	public run(): Thenable<any> {
 		const languages = this.modeService.getRegisteredLanguageNames();
 		const picks: IQuickPickItem[] = languages.sort().map((lang, index) => {
 			let description: string = nls.localize('languageDescriptionConfigured', "({0})", this.modeService.getModeIdForLanguageName(lang.toLowerCase()));
@@ -289,8 +277,8 @@ export class ConfigureLanguageBasedSettingsAction extends Action {
 		return this.quickInputService.pick(picks, { placeHolder: nls.localize('pickLanguage', "Select Language") })
 			.then(pick => {
 				if (pick) {
-					return this.modeService.getOrCreateModeByLanguageName(pick.label)
-						.then(mode => this.preferencesService.configureSettingsForLanguage(mode.getLanguageIdentifier().language));
+					const modeId = this.modeService.getModeIdForLanguageName(pick.label.toLowerCase());
+					return this.preferencesService.configureSettingsForLanguage(modeId);
 				}
 				return undefined;
 			});

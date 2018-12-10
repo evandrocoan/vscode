@@ -127,7 +127,7 @@ export const tocData: ITOCEntry = {
 				{
 					id: 'features/search',
 					label: localize('search', "Search"),
-					settings: ['search.*']
+					settings: ['search.*', 'searchRipgrep.*']
 				}
 				,
 				{
@@ -197,4 +197,5 @@ export const knownAcronyms = new Set();
 	'ts',
 	'ie',
 	'id',
+	'php',
 ].forEach(str => knownAcronyms.add(str));

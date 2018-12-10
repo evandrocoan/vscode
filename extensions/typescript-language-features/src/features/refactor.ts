@@ -40,25 +40,25 @@ class ApplyRefactoringCommand implements Command {
 			}
 		*/
 		this.telemetryReporter.logTelemetry('refactor.execute', {
-			action: action
+			action: action,
 		});
 
 		const args: Proto.GetEditsForRefactorRequestArgs = {
 			...typeConverters.Range.toFileRangeRequestArgs(file, range),
 			refactor,
-			action
+			action,
 		};
-		const { body } = await this.client.execute('getEditsForRefactor', args, nulToken);
-		if (!body || !body.edits.length) {
+		const response = await this.client.execute('getEditsForRefactor', args, nulToken);
+		if (response.type !== 'response' || !response.body || !response.body.edits.length) {
 			return false;
 		}
 
-		const workspaceEdit = await this.toWorkspaceEdit(body);
+		const workspaceEdit = await this.toWorkspaceEdit(response.body);
 		if (!(await vscode.workspace.applyEdit(workspaceEdit))) {
 			return false;
 		}
 
-		const renameLocation = body.renameLocation;
+		const renameLocation = response.body.renameLocation;
 		if (renameLocation) {
 			await vscode.commands.executeCommand('editor.action.rename', [
 				document.uri,
@@ -94,7 +94,7 @@ class SelectRefactorCommand implements Command {
 	): Promise<boolean> {
 		const selected = await vscode.window.showQuickPick(info.actions.map((action): vscode.QuickPickItem => ({
 			label: action.name,
-			description: action.description
+			description: action.description,
 		})));
 		if (!selected) {
 			return false;
@@ -119,7 +119,7 @@ class TypeScriptRefactorProvider implements vscode.CodeActionProvider {
 	}
 
 	public static readonly metadata: vscode.CodeActionProviderMetadata = {
-		providedCodeActionKinds: [vscode.CodeActionKind.Refactor]
+		providedCodeActionKinds: [vscode.CodeActionKind.Refactor],
 	};
 
 	public async provideCodeActions(
@@ -132,7 +132,7 @@ class TypeScriptRefactorProvider implements vscode.CodeActionProvider {
 			return undefined;
 		}
 
-		const file = this.client.toPath(document.uri);
+		const file = this.client.toOpenedFilePath(document);
 		if (!file) {
 			return undefined;
 		}
@@ -140,18 +140,12 @@ class TypeScriptRefactorProvider implements vscode.CodeActionProvider {
 		await this.formattingOptionsManager.ensureConfigurationForDocument(document, token);
 
 		const args: Proto.GetApplicableRefactorsRequestArgs = typeConverters.Range.toFileRangeRequestArgs(file, rangeOrSelection);
-		let refactorings: Proto.ApplicableRefactorInfo[];
-		try {
-			const { body } = await this.client.execute('getApplicableRefactors', args, token);
-			if (!body) {
-				return undefined;
-			}
-			refactorings = body;
-		} catch {
+		const response = await this.client.execute('getApplicableRefactors', args, token);
+		if (response.type !== 'response' || !response.body) {
 			return undefined;
 		}
 
-		return this.convertApplicableRefactors(refactorings, document, file, rangeOrSelection);
+		return this.convertApplicableRefactors(response.body, document, file, rangeOrSelection);
 	}
 
 	private convertApplicableRefactors(
